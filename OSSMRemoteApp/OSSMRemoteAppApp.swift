@@ -9,9 +9,11 @@ import SwiftUI
 
 @main
 struct OSSMRemoteAppApp: App {
+    @StateObject var bleManager = OSSMBLEManager()
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            OSSMControlView()
+                .environmentObject(bleManager)
         }
     }
 }
