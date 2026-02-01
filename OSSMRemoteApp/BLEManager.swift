@@ -104,6 +104,7 @@ struct StrokeEngineView: View {
     @State private var isUpdating = false
     @State private var showError = false
     @State private var errorMessage = ""
+    @State private var showSensationInfo: Bool = false
 
     // Dragging state tracking
     @State private var isDraggingSpeed = false
@@ -184,11 +185,22 @@ struct StrokeEngineView: View {
             } header: {
                 HStack {
                     Text("Sensation")
+                    Button("info", systemImage: "info.circle") {
+                        showSensationInfo.toggle()
+                    }
+                    .labelStyle(.iconOnly)
+                    .popover(isPresented: $showSensationInfo) {
+                        Text(KnownPattern(rawValue: selectedPattern)?.sensationDescription ?? LocalizedStringKey("Error"))
+                            .font(.caption2)
+                            .minimumScaleFactor(0.5)
+                            .padding(.horizontal, 8)
+                            .presentationCompactAdaptation(.popover)
+                    }
                     Spacer()
                     Text("\(Int((sensation*2)-100))")
                         .foregroundColor(.secondary)
                 }
-            }
+            }.disabled(KnownPattern(rawValue: selectedPattern)?.sensationDescription == nil)
 
             // Pattern Selection
             Section("Pattern") {
@@ -198,11 +210,13 @@ struct StrokeEngineView: View {
                             Text(pattern.description)
                                 .font(.caption2)
                                 .minimumScaleFactor(0.5)
-                                .lineLimit(2)
+                                .lineLimit(3, reservesSpace: true)
+                                .padding(.horizontal, 8)
                         }.tag(pattern.rawValue)
                     }
                 }
                 .onChange(of: selectedPattern) { _, newValue in
+                    lastInteractionTime = Date() // Record interaction time
                     bleManager.setPattern(newValue)
                 }
             }
@@ -226,6 +240,31 @@ struct StrokeEngineView: View {
         .monospacedDigit()
         .disabled(bleManager.currentPage != .strokeEngine )
         .navigationTitle("Stroke Engine")
+        .onAppear {
+            syncState()
+        }
+        .onReceive(bleManager.runtimeData.$currentState) { _ in
+            syncState()
+        }
+    }
+
+    // Lockout timer to prevent incoming packets from resetting selection while user is interacting
+    @State private var lastInteractionTime: Date = Date.distantPast
+    
+    private func syncState() {
+        let state = bleManager.runtimeData.currentState
+        
+        if !isDraggingSpeed { speed = Double(state.speed) }
+        if !isDraggingStroke { stroke = Double(state.stroke) }
+        if !isDraggingDepth { depth = Double(state.depth) }
+        if !isDraggingSensation { sensation = Double(state.sensation) }
+        
+        // Only sync pattern if we haven't interacted with it recently (1.5s lockout)
+        if Date().timeIntervalSince(lastInteractionTime) > 1.5 {
+             if selectedPattern != state.pattern {
+                selectedPattern = state.pattern
+            }
+        }
     }
 }
 
@@ -377,21 +416,29 @@ class OSSMBLEManager: NSObject, ObservableObject {
     // MARK: - Published Properties
 
     @Published var connectionStatus: OSSMConnectionStatus = .disconnected
-    @Published var currentState: OSSMState = OSSMState()
+    // REMOVED @Published var currentState to prevent massive re-renders
+    // @Published var currentState: OSSMState = OSSMState() 
+    
+    // Derived status for the main view to switch pages
+    @Published var currentRootState: OSSMStatus = .idle 
+    
     @Published var patterns: [OSSMPattern] = []
     @Published var isReady: Bool = false
     @Published var lastError: String?
     @Published var discoveredPeripherals: [CBPeripheral] = []
-    @Published var speedKnobAsLimit: Bool = true  // Default in firmware is true
+    @Published var speedKnobAsLimit: Bool = true 
+    
+    // High-frequency data container (Not @Published in the manager itself)
+    let runtimeData = OSSMRuntimeData()
 
     // MARK: - Computed Properties
 
     var currentPage: OSSMPage? {
-        try? OSSMPage(currentState.state)
+        try? OSSMPage(currentRootState)
     }
     var homing: Bool {
         let homingStates: [OSSMStatus] = [.homing, .homingForward, .homingBackward]
-        return homingStates.contains(currentState.state)
+        return homingStates.contains(currentRootState)
     }
 
 
@@ -604,7 +651,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
         patternListCharacteristic = nil
         patternDescriptionCharacteristic = nil
         patterns.removeAll()
-        currentState = OSSMState()
+        patterns.removeAll()
+        runtimeData.currentState = OSSMState()
+        currentRootState = .idle
         speedKnobAsLimit = true
     }
 }
@@ -762,9 +811,16 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             // Parse state JSON from firmware
             if let state = OSSMState.fromJSON(data) {
                 DispatchQueue.main.async {
-                    self.currentState = state
+                    // 1. Update the high-frequency data container
+                    self.runtimeData.update(with: state)
+                    
+                    // 2. Only update the main published property if the high-level state changed
+                    // This prevents the root view from re-rendering on every speed change
+                    if self.currentRootState != state.state {
+                        self.currentRootState = state.state
+                    }
                 }
-                print("[OSSM] State update: \(state)")
+                print("[OSSM] State update: \(state.state.rawValue)")
             } else if let jsonString = String(data: data, encoding: .utf8) {
                 print("[OSSM] Failed to parse state JSON: \(jsonString)")
             }
@@ -855,6 +911,19 @@ enum OSSMError: LocalizedError {
             return "Invalid response from device"
         case .timeout:
             return "Operation timed out"
+        }
+    }
+}
+
+/// Container for high-frequency updates that doesn't trigger the main BLEManager to publish changes
+class OSSMRuntimeData: ObservableObject {
+    @Published var currentState: OSSMState = OSSMState()
+    
+    func update(with newState: OSSMState) {
+        // Only publish if something actually changed to be safe, 
+        // though SwiftUI handles this well usually.
+        if currentState != newState {
+            currentState = newState
         }
     }
 }

@@ -12,22 +12,12 @@ struct OSSMControlView: View {
     @EnvironmentObject private var bleManager: OSSMBLEManager
     @State private var path: [OSSMPage] = []
     @AppStorage("savedUUID") private var savedUUID: String?
-
-    @State private var speed: Double = 0
-    @State private var stroke: Double = 50
-    @State private var depth: Double = 50
-    @State private var sensation: Double = 50
-    @State private var selectedPattern: Int = 0
-
-    @State private var isUpdating = false
-    @State private var showError = false
-    @State private var errorMessage = ""
+    @State private var showError: Bool = false
+    @State private var errorMessage: String = ""
 
     // Dragging state tracking
-    @State private var isDraggingSpeed = false
-    @State private var isDraggingStroke = false
-    @State private var isDraggingDepth = false
-    @State private var isDraggingSensation = false
+    // Removed redundant state variables to prevent flickering
+
 
     // Homing sheet animation toggle (true for 1.5s, false for 0.5s)
     @State private var homingPulse = false
@@ -41,7 +31,7 @@ struct OSSMControlView: View {
                 }
                 // Status Section
                 Section("Device Status") {
-                    Text(bleManager.currentState.state.rawValue)
+                    Text(bleManager.currentRootState.rawValue)
                 }
                 Button("Disconnect", role: .destructive) {
                     bleManager.disconnect()
@@ -64,33 +54,13 @@ struct OSSMControlView: View {
             Group {
                 if bleManager.connectionStatus == .ready {
                     MenuView()
-                        .sheet(
-                            isPresented: Binding(
-                                get: { bleManager.homing },
-                                set: { _ in }
+                        .sheet(isPresented: .constant(bleManager.homing)) {
+                            HomingSheetView(
+                                forward: bleManager.currentRootState.rawValue.contains("forward"),
+                                homingPulse: $homingPulse,
+                                onAppear: startHomingPulseLoop,
+                                onDisappear: stopHomingPulseLoop
                             )
-                        ) {
-                            let forward = bleManager.currentState.state.rawValue.contains("forward")
-                            let homingString = forward ? "Homing Forward" : "Homing Backward"
-                            let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
-
-                            VStack(spacing: 16) {
-                                ProgressView(homingString)
-                                    .contentTransition(.numericText())
-                                Image(systemName: homingImage)
-                                    // drawOn/drawOff are effectively the same right now, so we toggle isActive to keep it animating
-                                    .symbolEffect(.drawOn.byLayer, isActive: homingPulse)
-                                    .contentTransition(.symbolEffect(.replace))
-                            }
-                            .animation(.easeInOut, value: homingString)
-                            .font(.largeTitle.bold())
-                            .fontDesign(.rounded)
-                            .onAppear {
-                                startHomingPulseLoop()
-                            }
-                            .onDisappear {
-                                stopHomingPulseLoop()
-                            }
                             .interactiveDismissDisabled()
                             .presentationDetents([.medium])
                         }
@@ -142,16 +112,7 @@ struct OSSMControlView: View {
                 showError = true
             }
         }
-        .onChange(of: bleManager.currentState) { _, newState in
-            // Sync UI with device state (only if not currently updating)
-            if !isUpdating {
-                if !isDraggingSpeed { speed = Double(newState.speed) }
-                if !isDraggingStroke { stroke = Double(newState.stroke) }
-                if !isDraggingDepth { depth = Double(newState.depth) }
-                if !isDraggingSensation { sensation = Double(newState.sensation) }
-                selectedPattern = newState.pattern
-            }
-        }
+        // Removed redundant .onChange(of: bleManager.currentState) to prevent main view refreshes
         .onChange(of: bleManager.connectionStatus) { _, status in
             if status == .ready {
                 path = []
@@ -280,3 +241,28 @@ struct OSSMControlView: View {
         }
     }
 }
+private struct HomingSheetView: View {
+    let forward: Bool
+    @Binding var homingPulse: Bool
+    let onAppear: () -> Void
+    let onDisappear: () -> Void
+
+    var body: some View {
+        let homingString = forward ? "Homing Forward" : "Homing Backward"
+        let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
+
+        VStack(spacing: 16) {
+            ProgressView(homingString)
+                .contentTransition(.numericText())
+            Image(systemName: homingImage)
+                .symbolEffect(.drawOn.byLayer, isActive: homingPulse)
+                .contentTransition(.symbolEffect(.replace))
+        }
+        .animation(.easeInOut, value: homingString)
+        .font(.largeTitle.bold())
+        .fontDesign(.rounded)
+        .onAppear { onAppear() }
+        .onDisappear { onDisappear() }
+    }
+}
+
