@@ -9,6 +9,8 @@ import SwiftUI
 import CoreBluetooth
 
 struct OSSMControlView: View {
+    @AppStorage("homingForwardTime") private var homingForwardTime: Double?
+    @AppStorage("homingBackwardTime") private var homingBackwardTime: Double?
     @EnvironmentObject private var bleManager: OSSMBLEManager
     @State private var path: [OSSMPage] = []
     @AppStorage("savedUUID") private var savedUUID: String?
@@ -23,6 +25,13 @@ struct OSSMControlView: View {
     @State private var homingPulse = false
     @State private var homingPulseTask: Task<Void, Never>? = nil
 
+    fileprivate func resetAppStorage() {
+        // Remove saved device so we don't auto-reconnect
+        savedUUID = nil
+        homingBackwardTime = nil
+        homingForwardTime = nil
+    }
+    
     fileprivate func toolbarMenu() -> ToolbarItem<(), Menu<some View, TupleView<(Section<Text, some View, EmptyView>, Section<Text, Text, EmptyView>, Button<Text>)>>> {
         return ToolbarItem(placement: .topBarTrailing) {
             Menu {
@@ -35,8 +44,7 @@ struct OSSMControlView: View {
                 }
                 Button("Disconnect", role: .destructive) {
                     bleManager.disconnect()
-                    // Remove saved device so we don't auto-reconnect
-                    savedUUID = nil
+                    resetAppStorage()
                     // Start scanning for new devices
                     bleManager.startScanning()
                 }
@@ -241,7 +249,41 @@ struct OSSMControlView: View {
         }
     }
 }
+
+private struct HomingProgressBar: View {
+    @EnvironmentObject var bleManager: OSSMBLEManager
+    let duration: TimeInterval
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
+            let progress: CGFloat = {
+                guard duration > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
+                let remaining = end.timeIntervalSinceNow
+                let p = 1 - (remaining / duration)
+                return CGFloat(max(0, min(1, p)))
+            }()
+
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.quaternary)
+                    Capsule()
+                        .fill(.tint)
+                        .frame(width: progress * geo.size.width)
+                        .animation(.linear(duration: 1.0/30.0), value: progress)
+                }
+            }
+            .frame(height: 10)
+        }
+    }
+}
+
 private struct HomingSheetView: View {
+    @EnvironmentObject var bleManager: OSSMBLEManager
+
+    @AppStorage("homingForwardTime") private var homingForwardTime: Double?
+    @AppStorage("homingBackwardTime") private var homingBackwardTime: Double?
+
     let forward: Bool
     @Binding var homingPulse: Bool
     let onAppear: () -> Void
@@ -252,8 +294,39 @@ private struct HomingSheetView: View {
         let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
 
         VStack(spacing: 16) {
-            ProgressView(homingString)
-                .contentTransition(.numericText())
+            let homingSeconds = forward ? homingForwardTime ?? 0 : homingBackwardTime ?? 0
+            TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
+                let progress: CGFloat = {
+                    guard homingSeconds > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
+                    let remaining = end.timeIntervalSinceNow
+                    let p = 1 - (remaining / homingSeconds)
+                    return CGFloat(max(0, min(1, p)))
+                }()
+
+                ZStack(alignment: .leading) {
+                    // Base text (unfilled) in light gray
+                    Text(homingString)
+                        .foregroundStyle(.secondary)
+
+                    // Filled portion in white, clipped by progress width
+                    Text(homingString)
+                        .contentTransition(.numericText())
+                        .foregroundStyle(.white)
+                        .overlay {
+                            GeometryReader { geo in
+                                Color.clear
+                                    .frame(width: progress * geo.size.width)
+                            }
+                        }
+                        .mask {
+                            GeometryReader { geo in
+                                Rectangle()
+                                    .frame(width: progress * geo.size.width)
+                                    .animation(.linear(duration: 1.0/30.0), value: progress)
+                            }
+                        }
+                }
+            }
             Image(systemName: homingImage)
                 .symbolEffect(.drawOn.byLayer, isActive: homingPulse)
                 .contentTransition(.symbolEffect(.replace))
