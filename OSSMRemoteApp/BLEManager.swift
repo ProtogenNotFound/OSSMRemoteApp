@@ -112,17 +112,41 @@ struct StrokeEngineView: View {
     @State private var isDraggingDepth = false
     @State private var isDraggingSensation = false
 
+    // Value increments
+    @State private var speedIncrement: Int = 5
+
     var body: some View {
         List {
             // Speed Control
             Section {
                 VStack(alignment: .leading) {
-                    Slider(value: $speed, in: 0...100, step: 1) { editing in
-                        isDraggingSpeed = editing
-                        if !editing {
-                            bleManager.setSpeed(Int(speed))
+                    HStack {
+//                        Button("Decrease", systemImage: "minus") {
+//                            isDraggingSpeed = false
+//                            let newSpeed = max(0, Int(speed) - speedIncrement)
+//                            bleManager.setSpeed(newSpeed)
+//                            speed = Double(newSpeed)
+//                        }
+                        Slider(value: $speed, in: 0...100, step: 1) { editing in
+                            isDraggingSpeed = editing
+                            if !editing {
+                                bleManager.setSpeed(Int(speed))
+                            }
                         }
-                    }
+//                        Button("Increase", systemImage: "minus") {
+//                            isDraggingSpeed = false
+//                            print("speed is currently \(speed)")
+//                            let newSpeed = min(100, Int(speed) + speedIncrement)
+//                            print("new speed is \(newSpeed)")
+//                            bleManager.setSpeed(newSpeed) { res in
+//                                print("speed set completion")
+//                                print(res)
+//                            }
+//                            print("setting speed to \(newSpeed)")
+//                            speed = Double(newSpeed)
+//                            print("set speed to \(speed)")
+//                        }
+                    }.labelStyle(.iconOnly)
                 }
             } header: {
                 HStack {
@@ -222,7 +246,7 @@ struct StrokeEngineView: View {
             }
         }
         .toolbar{
-            ToolbarItem(placement: .bottomBar) {
+            ToolbarItemGroup(placement: .bottomBar) {
                 Button {
                     bleManager.emergencyStop()
                     speed = 0
@@ -235,10 +259,22 @@ struct StrokeEngineView: View {
                 }
                 .tint(.red)
                 .buttonStyle(.borderedProminent)
+                Button {
+                    bleManager.pullOut()
+                    speed = 5
+                    stroke = 0
+                    depth = 0
+                } label: {
+                    HStack {
+                        Image(systemName: "arrow.backward.to.line")
+                        Text("Pull Out")
+                    }
+                }
+
             }
         }
         .monospacedDigit()
-        .disabled(bleManager.currentPage != .strokeEngine )
+        .disabled(bleManager.currentPage != .strokeEngine)
         .navigationTitle("Stroke Engine")
         .onAppear {
             syncState()
@@ -252,9 +288,9 @@ struct StrokeEngineView: View {
     @State private var lastInteractionTime: Date = Date.distantPast
     
     private func syncState() {
+        print("syncing state")
         let state = bleManager.runtimeData.currentState
-        
-        if !isDraggingSpeed { speed = Double(state.speed) }
+        if !isDraggingSpeed { speed = Double(state.speed); print("syncing speed: \(speed)") }
         if !isDraggingStroke { stroke = Double(state.stroke) }
         if !isDraggingDepth { depth = Double(state.depth) }
         if !isDraggingSensation { sensation = Double(state.sensation) }
@@ -427,7 +463,8 @@ class OSSMBLEManager: NSObject, ObservableObject {
     @Published var lastError: String?
     @Published var discoveredPeripherals: [CBPeripheral] = []
     @Published var speedKnobAsLimit: Bool = true 
-    
+    @Published var homingEstimatedEndTime: Date?
+
     // High-frequency data container (Not @Published in the manager itself)
     let runtimeData = OSSMRuntimeData()
 
@@ -458,6 +495,10 @@ class OSSMBLEManager: NSObject, ObservableObject {
     // Command response handling
     private var pendingCommandCompletion: ((Result<Void, Error>) -> Void)?
     private var pendingReadCompletion: ((Result<Data, Error>) -> Void)?
+
+    // Homing timing tracking
+    private var homingForwardStartTime: Date?
+    private var homingBackwardStartTime: Date?
 
     // MARK: - Initialization
 
@@ -526,6 +567,16 @@ class OSSMBLEManager: NSObject, ObservableObject {
     /// Emergency stop - immediately stops the OSSM device
     func emergencyStop() {
         sendCommandFireAndForget("set:speed:0")
+    }
+
+    func pullOut() {
+        Task {
+            // Speed 5, Stroke 5, Depth 0
+            setSpeed(5)
+            setStroke(5)
+            try! await Task.sleep(for: .seconds(2))
+            setDepth(0)
+        }
     }
 
     /// Set speed (0-100)
@@ -655,6 +706,8 @@ class OSSMBLEManager: NSObject, ObservableObject {
         runtimeData.currentState = OSSMState()
         currentRootState = .idle
         speedKnobAsLimit = true
+        homingForwardStartTime = nil
+        homingBackwardStartTime = nil
     }
 }
 
@@ -817,6 +870,7 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                     // 2. Only update the main published property if the high-level state changed
                     // This prevents the root view from re-rendering on every speed change
                     if self.currentRootState != state.state {
+                        self.handleStateTransition(from: self.currentRootState, to: state.state)
                         self.currentRootState = state.state
                     }
                 }
@@ -880,6 +934,60 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             print("[OSSM] Notification state error: \(error.localizedDescription)")
         } else {
             print("[OSSM] Notifications enabled for \(characteristic.uuid)")
+        }
+    }
+
+}
+
+// MARK: - State Transition Logic
+extension OSSMBLEManager {
+    private func handleStateTransition(from oldState: OSSMStatus, to newState: OSSMStatus) {
+        // Homing Forward Logic
+        if newState == .homingForward {
+            // Started homing forward
+            homingForwardStartTime = Date()
+            let storedDuration = UserDefaults.standard.double(forKey: "homingForwardTime")
+            // If storedDuration is 0 (not set), default to 5.0 for estimation
+            let duration = storedDuration > 0 ? storedDuration : 5.0
+            homingEstimatedEndTime = Date().addingTimeInterval(duration)
+            print("[OSSM] Homing Forward started at \(homingForwardStartTime!). Estimated end: \(homingEstimatedEndTime!)")
+        } else if oldState == .homingForward {
+            // Finished homing forward
+            if let startTime = homingForwardStartTime {
+                let duration = Date().timeIntervalSince(startTime)
+                let storedDuration = UserDefaults.standard.double(forKey: "homingForwardTime")
+                let newMaxDuration = max(storedDuration, duration)
+                
+                print("[OSSM] Homing Forward finished. Duration: \(duration)s. New Max: \(newMaxDuration)s")
+                UserDefaults.standard.set(newMaxDuration, forKey: "homingForwardTime")
+                
+                homingForwardStartTime = nil
+                homingEstimatedEndTime = nil
+            }
+        }
+        
+        // Homing Backward Logic
+        if newState == .homingBackward {
+            // Started homing backward
+            homingBackwardStartTime = Date()
+            let storedDuration = UserDefaults.standard.double(forKey: "homingBackwardTime")
+            // If storedDuration is 0 (not set), default to 5.0 for estimation
+            let duration = storedDuration > 0 ? storedDuration : 5.0
+            homingEstimatedEndTime = Date().addingTimeInterval(duration)
+            print("[OSSM] Homing Backward started at \(homingBackwardStartTime!). Estimated end: \(homingEstimatedEndTime!)")
+        } else if oldState == .homingBackward {
+            // Finished homing backward
+            if let startTime = homingBackwardStartTime {
+                let duration = Date().timeIntervalSince(startTime)
+                let storedDuration = UserDefaults.standard.double(forKey: "homingBackwardTime")
+                let newMaxDuration = max(storedDuration, duration)
+                
+                print("[OSSM] Homing Backward finished. Duration: \(duration)s. New Max: \(newMaxDuration)s")
+                UserDefaults.standard.set(newMaxDuration, forKey: "homingBackwardTime")
+                
+                homingBackwardStartTime = nil
+                homingEstimatedEndTime = nil
+            }
         }
     }
 }
