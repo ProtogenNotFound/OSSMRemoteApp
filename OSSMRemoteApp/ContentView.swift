@@ -20,7 +20,6 @@ struct OSSMControlView: View {
     // Dragging state tracking
     // Removed redundant state variables to prevent flickering
 
-
     // Homing sheet animation toggle (true for 1.5s, false for 0.5s)
     @State private var homingPulse = false
     @State private var homingPulseTask: Task<Void, Never>? = nil
