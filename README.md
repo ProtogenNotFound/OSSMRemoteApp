@@ -1,9 +1,10 @@
 # An app to control your OSSM
-<img width="256" height="256" alt="ossmRemote-iOS-Dark-1024x1024@1x" src="https://github.com/user-attachments/assets/a073c0ba-246b-4893-9088-07a1e2cc98fa" />
+
+<img width="256" height="256" alt="ossmRemote-iOS-Dark-1024x1024@1x" src="https://github.com/user-attachments/assets/6f125022-f2bb-44c9-98bb-0669cfae9547" />
 
 | | | |
 |---|---|---|
-| ![](https://github.com/user-attachments/assets/5f4ba841-e504-4723-8999-c2e34b42a61e) | ![](https://github.com/user-attachments/assets/61030e95-2723-4aa2-86a5-dc67ee3354cb) | ![](https://github.com/user-attachments/assets/b8ee9fa9-ef2e-43f2-aac4-1438ccfac0aa) |
+| ![IMG_3004](https://github.com/user-attachments/assets/9991a1f6-5f53-48b8-98a3-a53b66f914f0)|  ![homingGIF-ezgif com-video-to-gif-converter](https://github.com/user-attachments/assets/5b7eca7f-9b92-482d-92ed-831c04d07918) | ![IMG_3008](https://github.com/user-attachments/assets/47357acb-01da-4fe0-a5fb-3fbcea053db9)  |
 
 ### Features?
 - Full stroke engine functionality
@@ -12,6 +13,7 @@
 - Might currently look a bit ugly but should also run on iPad/Vision Pro
 ### How do I install it?
 **sry, you need a mac for this one :(**
+
 - clone the repo
 - open it in Xcode
 - change your team (just trying to build should throw an error that helps you find this)
