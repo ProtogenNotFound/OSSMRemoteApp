@@ -30,7 +30,7 @@ struct OSSMControlView: View {
         homingBackwardTime = nil
         homingForwardTime = nil
     }
-    
+
     fileprivate func toolbarMenu() -> ToolbarItem<(), Menu<some View, TupleView<(Section<Text, some View, EmptyView>, Section<Text, Text, EmptyView>, Button<Text>)>>> {
         return ToolbarItem(placement: .topBarTrailing) {
             Menu {
@@ -52,10 +52,10 @@ struct OSSMControlView: View {
                     .fill(statusColor)
                     .frame(width: 8, height: 8)
             }
-            
+
         }
     }
-    
+
     var body: some View {
         NavigationStack (path: $path){
             Group {
@@ -71,6 +71,8 @@ struct OSSMControlView: View {
                             .interactiveDismissDisabled()
                             .presentationDetents([.medium])
                         }
+                } else if savedUUID != nil {
+                    savedDeviceReconnectView
                 } else if !bleManager.discoveredPeripherals.isEmpty {
                     deviceListView
                 } else {
@@ -94,6 +96,11 @@ struct OSSMControlView: View {
                         .toolbar {
                             toolbarMenu()
                         }
+                case .streaming:
+                    StreamingView()
+                    .toolbar {
+                        toolbarMenu()
+                    }
                 }
             }
             .toolbar {
@@ -157,6 +164,40 @@ struct OSSMControlView: View {
             Text("Scanning for OSSM devices...")
                 .font(.headline)
         }
+        .padding()
+    }
+
+    private var savedDeviceReconnectView: some View {
+        let found = !bleManager.discoveredPeripherals.isEmpty
+        return VStack(spacing: 16) {
+            Color.primary
+                .frame(width: 100, height: 100)
+                .mask {
+                    Image("ossm")
+                        .resizable()
+                }
+                .overlay(alignment: .topTrailing) {
+                    Image(systemName: found ? "antenna.radiowaves.left.and.right.circle.fill" : "magnifyingglass.circle.fill")
+                        .symbolRenderingMode(.multicolor)
+                        .symbolEffect(.breathe)
+                        .foregroundStyle(Color.accentColor)
+                        .font(.largeTitle)
+                        .offset(x: 10, y: -10)
+                        .contentTransition(.symbolEffect(.replace))
+                }
+                .padding()
+                .background(.ultraThickMaterial, in: .rect(cornerRadius: 16))
+                .glassEffect(.clear, in: .rect(cornerRadius: 16))
+            ProgressView("\(found ? "Connecting to" : "Looking for") your OSSM")
+            if let savedUUID {
+                Text(savedUUID)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+        }
+        .animation(.easeInOut, value: found)
         .padding()
     }
 
@@ -248,93 +289,3 @@ struct OSSMControlView: View {
         }
     }
 }
-
-private struct HomingProgressBar: View {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-    let duration: TimeInterval
-
-    var body: some View {
-        TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
-            let progress: CGFloat = {
-                guard duration > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
-                let remaining = end.timeIntervalSinceNow
-                let p = 1 - (remaining / duration)
-                return CGFloat(max(0, min(1, p)))
-            }()
-
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.quaternary)
-                    Capsule()
-                        .fill(.tint)
-                        .frame(width: progress * geo.size.width)
-                        .animation(.linear(duration: 1.0/30.0), value: progress)
-                }
-            }
-            .frame(height: 10)
-        }
-    }
-}
-
-private struct HomingSheetView: View {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-
-    @AppStorage("homingForwardTime") private var homingForwardTime: Double?
-    @AppStorage("homingBackwardTime") private var homingBackwardTime: Double?
-
-    let forward: Bool
-    @Binding var homingPulse: Bool
-    let onAppear: () -> Void
-    let onDisappear: () -> Void
-
-    var body: some View {
-        let homingString = forward ? "Homing Forward" : "Homing Backward"
-        let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
-
-        VStack(spacing: 16) {
-            let homingSeconds = forward ? homingForwardTime ?? 0 : homingBackwardTime ?? 0
-            TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
-                let progress: CGFloat = {
-                    guard homingSeconds > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
-                    let remaining = end.timeIntervalSinceNow
-                    let p = 1 - (remaining / homingSeconds)
-                    return CGFloat(max(0, min(1, p)))
-                }()
-
-                ZStack(alignment: .leading) {
-                    // Base text (unfilled) in light gray
-                    Text(homingString)
-                        .foregroundStyle(.secondary)
-
-                    // Filled portion in white, clipped by progress width
-                    Text(homingString)
-                        .contentTransition(.numericText())
-                        .foregroundStyle(.white)
-                        .overlay {
-                            GeometryReader { geo in
-                                Color.clear
-                                    .frame(width: progress * geo.size.width)
-                            }
-                        }
-                        .mask {
-                            GeometryReader { geo in
-                                Rectangle()
-                                    .frame(width: progress * geo.size.width)
-                                    .animation(.linear(duration: 1.0/30.0), value: progress)
-                            }
-                        }
-                }
-            }
-            Image(systemName: homingImage)
-                .symbolEffect(.drawOn.byLayer, isActive: homingPulse)
-                .contentTransition(.symbolEffect(.replace))
-        }
-        .animation(.easeInOut, value: homingString)
-        .font(.largeTitle.bold())
-        .fontDesign(.rounded)
-        .onAppear { onAppear() }
-        .onDisappear { onDisappear() }
-    }
-}
-
