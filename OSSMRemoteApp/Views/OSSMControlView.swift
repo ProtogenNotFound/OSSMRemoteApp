@@ -31,8 +31,9 @@ struct OSSMControlView: View {
         homingForwardTime = nil
     }
 
-    fileprivate func toolbarMenu() -> ToolbarItem<(), Menu<some View, TupleView<(Section<Text, some View, EmptyView>, Section<Text, Text, EmptyView>, Button<Text>)>>> {
-        return ToolbarItem(placement: .topBarTrailing) {
+    @ToolbarContentBuilder
+    private var toolbarMenu: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Section("Connection Status"){
                     connectionStatusView
@@ -46,6 +47,13 @@ struct OSSMControlView: View {
                     resetAppStorage()
                     // Start scanning for new devices
                     bleManager.startScanning()
+                }.disabled(bleManager.connectionStatus != .connected)
+                Button("Debug Mode") {
+                    if bleManager.isDebugMode {
+                        bleManager.disableDebugMode()
+                    } else {
+                        bleManager.enableDebugMode()
+                    }
                 }
             } label: {
                 Circle()
@@ -84,27 +92,27 @@ struct OSSMControlView: View {
                 case .menu:
                     MenuView()
                         .toolbar {
-                            toolbarMenu()
+                            toolbarMenu
                         }
                 case .simplePenetration:
                     SimplePenetrationView()
                         .toolbar {
-                            toolbarMenu()
+                            toolbarMenu
                         }
                 case .strokeEngine:
                     StrokeEngineView()
                         .toolbar {
-                            toolbarMenu()
+                            toolbarMenu
                         }
                 case .streaming:
                     StreamingView()
                     .toolbar {
-                        toolbarMenu()
+                        toolbarMenu
                     }
                 }
             }
             .toolbar {
-                toolbarMenu()
+                toolbarMenu
             }
             .navigationTitle("OSSM Control")
         }

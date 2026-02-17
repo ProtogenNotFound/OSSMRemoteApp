@@ -135,6 +135,7 @@ struct OSSMPattern: Identifiable {
     let idx: Int
     let name: String
     var description: String?
+    var sensationDescription: LocalizedStringKey?
     var id: Int { idx }
 }
 
