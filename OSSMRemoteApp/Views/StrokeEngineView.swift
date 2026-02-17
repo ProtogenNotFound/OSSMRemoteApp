@@ -29,6 +29,25 @@ struct StrokeEngineView: View {
     // Value increments
     @State private var speedIncrement: Int = 5
 
+    private var availablePatterns: [OSSMPattern] {
+        if bleManager.patterns.isEmpty {
+            return KnownPattern.allCases.map { pattern in
+                OSSMPattern(
+                    idx: pattern.rawValue,
+                    name: pattern.name,
+                    description: pattern.description,
+                    sensationDescription: pattern.sensationDescription
+                )
+            }
+        }
+
+        return bleManager.patterns.sorted { $0.idx < $1.idx }
+    }
+
+    private var selectedPatternInfo: OSSMPattern? {
+        availablePatterns.first(where: { $0.idx == selectedPattern })
+    }
+
     var body: some View {
         List {
             // Speed Control
@@ -128,7 +147,7 @@ struct StrokeEngineView: View {
                     }
                     .labelStyle(.iconOnly)
                     .popover(isPresented: $showSensationInfo) {
-                        Text(KnownPattern(rawValue: selectedPattern)?.sensationDescription ?? LocalizedStringKey("Error"))
+                        Text(selectedPatternInfo?.sensationDescription ?? LocalizedStringKey("Error"))
                             .font(.caption2)
                             .minimumScaleFactor(0.5)
                             .padding(.horizontal, 8)
@@ -138,19 +157,19 @@ struct StrokeEngineView: View {
                     Text("\(Int((sensation*2)-100))")
                         .foregroundColor(.secondary)
                 }
-            }.disabled(KnownPattern(rawValue: selectedPattern)?.sensationDescription == nil)
+            }.disabled(selectedPatternInfo?.sensationDescription == nil)
 
             // Pattern Selection
             Section("Pattern") {
                 Picker("Pattern", selection: $selectedPattern) {
-                    ForEach(KnownPattern.allCases) { pattern in
-                        Section(pattern.name){
-                            Text(pattern.description)
+                    ForEach(availablePatterns) { pattern in
+                        Section(pattern.name) {
+                            Text(pattern.description ?? "")
                                 .font(.caption2)
                                 .minimumScaleFactor(0.5)
                                 .lineLimit(3, reservesSpace: true)
                                 .padding(.horizontal, 8)
-                        }.tag(pattern.rawValue)
+                        }.tag(pattern.idx)
                     }
                 }
                 .onChange(of: selectedPattern) { _, newValue in
