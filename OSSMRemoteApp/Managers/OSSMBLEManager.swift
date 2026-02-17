@@ -9,6 +9,7 @@
 import Foundation
 import CoreBluetooth
 import Combine
+import SwiftUI
 
 // MARK: - OSSM BLE Manager
 
@@ -27,6 +28,7 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     @Published var patterns: [OSSMPattern] = []
     @Published var isReady: Bool = false
+    @Published var isDebugMode: Bool = false
     @Published var lastError: String?
     @Published var discoveredPeripherals: [CBPeripheral] = []
     @Published var speedKnobAsLimit: Bool = true
@@ -62,10 +64,13 @@ class OSSMBLEManager: NSObject, ObservableObject {
     // Command response handling
     private var pendingCommandCompletion: ((Result<Void, Error>) -> Void)?
     private var pendingReadCompletion: ((Result<Data, Error>) -> Void)?
+    private var pendingReadTimeoutTask: Task<Void, Never>?
 
     // Async command/response handling
     private var pendingCommandResponseContinuation: CheckedContinuation<String, Error>?
     private var pendingCommandResponseTimeoutTask: Task<Void, Never>?
+
+    private var patternFetchTask: Task<Void, Never>?
 
     // Homing timing tracking
     private var homingForwardStartTime: Date?
@@ -82,6 +87,13 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     /// Start scanning for OSSM devices
     func startScanning() {
+        if isDebugMode {
+            connectionStatus = .ready
+            isReady = true
+            applyDebugState(.menuIdle)
+            refreshPatterns()
+            return
+        }
         guard centralManager.state == .poweredOn else {
             lastError = "Bluetooth is not powered on"
             return
@@ -110,6 +122,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     /// Connect to a specific peripheral
     func connect(to peripheral: CBPeripheral) {
+        if isDebugMode {
+            return
+        }
         stopScanning()
         connectionStatus = .connecting
         ossmPeripheral = peripheral
@@ -119,6 +134,12 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     /// Disconnect from the current device
     func disconnect() {
+        if isDebugMode {
+            applyDebugState(.menuIdle)
+            connectionStatus = .ready
+            isReady = true
+            return
+        }
         autoReconnect = false
 
         // Try to stop the device safely before disconnecting
@@ -131,6 +152,27 @@ class OSSMBLEManager: NSObject, ObservableObject {
         }
 
         resetState()
+    }
+
+    func refreshPatterns() {
+        patternFetchTask?.cancel()
+
+        if isDebugMode {
+            patterns = buildFallbackPatterns()
+            return
+        }
+
+        guard isReady else { return }
+
+        patternFetchTask = Task { @MainActor in
+            do {
+                let patterns = try await fetchPatternsFromDevice()
+                self.patterns = patterns
+            } catch {
+                print("[OSSM] Failed to fetch patterns: \(error)")
+                self.patterns = self.buildFallbackPatterns()
+            }
+        }
     }
 
     // MARK: - Command Methods
@@ -229,6 +271,13 @@ class OSSMBLEManager: NSObject, ObservableObject {
     ///                          When false, BLE speed commands control speed directly.
     /// IMPORTANT: You likely need to set this to false for BLE speed control to work independently!
     func setSpeedKnobConfig(knobAsLimit: Bool, completion: ((Result<Void, Error>) -> Void)? = nil) {
+        if isDebugMode {
+            DispatchQueue.main.async {
+                self.speedKnobAsLimit = knobAsLimit
+            }
+            completion?(.success(()))
+            return
+        }
         guard let characteristic = speedKnobConfigCharacteristic else {
             completion?(.failure(OSSMError.notReady))
             return
@@ -269,6 +318,10 @@ class OSSMBLEManager: NSObject, ObservableObject {
     ///   - timeout: Maximum time to wait for a response.
     /// - Returns: The raw response string received from the device.
     func sendCommandAndAwaitResponse(_ command: String, timeout: TimeInterval = 2.0) async throws -> String {
+        if isDebugMode {
+            handleDebugCommand(command, completion: nil)
+            return "ok"
+        }
         guard isReady else { throw OSSMError.notReady }
         guard let characteristic = commandCharacteristic else { throw OSSMError.characteristicNotFound }
         guard let data = command.data(using: .utf8) else {
@@ -308,6 +361,10 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     /// Send a command with completion handler
     private func sendCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?) {
+        if isDebugMode {
+            handleDebugCommand(command, completion: completion)
+            return
+        }
         guard isReady else {
             completion?(.failure(OSSMError.notReady))
             return
@@ -321,6 +378,44 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
         pendingCommandCompletion = completion
         ossmPeripheral?.writeValue(data, for: characteristic, type: .withResponse)
+    }
+
+    @MainActor
+    private func readValue(for characteristic: CBCharacteristic, timeout: TimeInterval = 2.0) async throws -> Data {
+        guard ossmPeripheral != nil else {
+            throw OSSMError.notReady
+        }
+        if pendingReadCompletion != nil {
+            throw OSSMError.unexpectedResponse("Another read is already pending")
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingReadCompletion = { result in
+                self.pendingReadTimeoutTask?.cancel()
+                self.pendingReadTimeoutTask = nil
+                switch result {
+                case .success(let data):
+                    continuation.resume(returning: data)
+                case .failure(let error):
+                    continuation.resume(throwing: error)
+                }
+            }
+
+            pendingReadTimeoutTask?.cancel()
+            pendingReadTimeoutTask = Task { [weak self] in
+                guard let self else { return }
+                do {
+                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                } catch {
+                    return
+                }
+                if let completion = self.pendingReadCompletion {
+                    self.pendingReadCompletion = nil
+                    completion(.failure(OSSMError.timeout))
+                }
+            }
+
+            self.ossmPeripheral?.readValue(for: characteristic)
+        }
     }
 
     private func resetState() {
@@ -342,6 +437,10 @@ class OSSMBLEManager: NSObject, ObservableObject {
         pendingCommandResponseTimeoutTask?.cancel()
         pendingCommandResponseTimeoutTask = nil
         pendingCommandResponseContinuation = nil
+        pendingReadTimeoutTask?.cancel()
+        pendingReadTimeoutTask = nil
+        patternFetchTask?.cancel()
+        patternFetchTask = nil
     }
 }
 
@@ -350,6 +449,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
 extension OSSMBLEManager: CBCentralManagerDelegate {
 
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        if isDebugMode {
+            return
+        }
         switch central.state {
         case .poweredOn:
             print("[OSSM] Bluetooth is powered on")
@@ -484,6 +586,8 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             // IMPORTANT: Set speed knob config to false for independent BLE speed control
             // Uncomment the next line if you want BLE to control speed directly
             setSpeedKnobConfig(knobAsLimit: false)
+
+            refreshPatterns()
         }
     }
 
@@ -492,6 +596,8 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             print("[OSSM] Error reading characteristic: \(error?.localizedDescription ?? "unknown")")
             pendingReadCompletion?(.failure(error ?? OSSMError.invalidResponse))
             pendingReadCompletion = nil
+            pendingReadTimeoutTask?.cancel()
+            pendingReadTimeoutTask = nil
             return
         }
 
@@ -549,10 +655,14 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             // Pattern list JSON
             pendingReadCompletion?(.success(data))
             pendingReadCompletion = nil
+            pendingReadTimeoutTask?.cancel()
+            pendingReadTimeoutTask = nil
 
         default:
             pendingReadCompletion?(.success(data))
             pendingReadCompletion = nil
+            pendingReadTimeoutTask?.cancel()
+            pendingReadTimeoutTask = nil
         }
     }
 
@@ -640,6 +750,140 @@ extension OSSMBLEManager {
                 homingBackwardStartTime = nil
                 homingEstimatedEndTime = nil
             }
+        }
+    }
+}
+
+// MARK: - Pattern Fetching
+
+extension OSSMBLEManager {
+    private func buildFallbackPatterns() -> [OSSMPattern] {
+        KnownPattern.allCases.map { pattern in
+            OSSMPattern(
+                idx: pattern.rawValue,
+                name: pattern.name,
+                description: pattern.description,
+                sensationDescription: pattern.sensationDescription
+            )
+        }
+    }
+
+    @MainActor
+    private func fetchPatternsFromDevice() async throws -> [OSSMPattern] {
+        guard let listCharacteristic = patternListCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        guard let _ = ossmPeripheral else {
+            throw OSSMError.notReady
+        }
+
+        let listData = try await readValue(for: listCharacteristic)
+        var patterns = parsePatternList(listData)
+
+        if patterns.isEmpty {
+            return buildFallbackPatterns()
+        }
+
+        let descriptions = try await fetchPatternDescriptions(for: patterns)
+        let fallbackMap = Dictionary(uniqueKeysWithValues: buildFallbackPatterns().map { ($0.idx, $0) })
+
+        patterns = patterns.map { pattern in
+            let fallback = fallbackMap[pattern.idx]
+            let deviceDescription = descriptions[pattern.idx]
+            let name = pattern.name.isEmpty ? (fallback?.name ?? "Pattern \(pattern.idx)") : pattern.name
+            let description = fallback?.description ?? deviceDescription
+            let sensationDescription = fallback?.sensationDescription ?? deviceDescription.map { LocalizedStringKey($0) }
+            return OSSMPattern(
+                idx: pattern.idx,
+                name: name,
+                description: description,
+                sensationDescription: sensationDescription
+            )
+        }
+
+        return patterns
+    }
+
+    @MainActor
+    private func fetchPatternDescriptions(for patterns: [OSSMPattern]) async throws -> [Int: String] {
+        guard let descriptionCharacteristic = patternDescriptionCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        guard let peripheral = ossmPeripheral else {
+            throw OSSMError.notReady
+        }
+
+        var descriptions: [Int: String] = [:]
+        for pattern in patterns {
+            if Task.isCancelled { break }
+            let payload = "\(pattern.idx)"
+            guard let data = payload.data(using: .utf8) else { continue }
+            peripheral.writeValue(data, for: descriptionCharacteristic, type: .withResponse)
+            let response = try await readValue(for: descriptionCharacteristic)
+            if let description = String(data: response, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !description.isEmpty {
+                descriptions[pattern.idx] = description
+            }
+        }
+
+        return descriptions
+    }
+
+    private func parsePatternList(_ data: Data) -> [OSSMPattern] {
+        if let json = try? JSONSerialization.jsonObject(with: data) {
+            if let dict = json as? [String: Any], let patterns = dict["patterns"] {
+                return parsePatternListObject(patterns)
+            }
+            if let array = json as? [[String: Any]] {
+                return parsePatternListArray(array)
+            }
+            if let array = json as? [String] {
+                return parsePatternListNames(array)
+            }
+            if let map = json as? [String: String] {
+                let pairs = map.compactMap { key, value -> OSSMPattern? in
+                    guard let idx = Int(key) else { return nil }
+                    return OSSMPattern(idx: idx, name: value, description: nil, sensationDescription: nil)
+                }
+                return pairs.sorted { $0.idx < $1.idx }
+            }
+        }
+
+        if let string = String(data: data, encoding: .utf8) {
+            let names = string
+                .split { $0 == "\n" || $0 == "," }
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return parsePatternListNames(names)
+        }
+
+        return []
+    }
+
+    private func parsePatternListObject(_ object: Any) -> [OSSMPattern] {
+        if let array = object as? [[String: Any]] {
+            return parsePatternListArray(array)
+        }
+        if let array = object as? [String] {
+            return parsePatternListNames(array)
+        }
+        return []
+    }
+
+    private func parsePatternListArray(_ array: [[String: Any]]) -> [OSSMPattern] {
+        var results: [OSSMPattern] = []
+        for (index, item) in array.enumerated() {
+            let idx = item["idx"] as? Int ?? item["id"] as? Int ?? index
+            let name = item["name"] as? String ?? ""
+            results.append(OSSMPattern(idx: idx, name: name, description: nil, sensationDescription: nil))
+        }
+        return results.sorted { $0.idx < $1.idx }
+    }
+
+    private func parsePatternListNames(_ names: [String]) -> [OSSMPattern] {
+        names.enumerated().map { index, name in
+            OSSMPattern(idx: index, name: name, description: nil, sensationDescription: nil)
         }
     }
 }
