@@ -8,11 +8,13 @@
 
 ### Features?
 - Full stroke engine functionality
+- Save presets for stroke engine configs
 - Looks kinda cool
-- Emergenct Stop/Pull-out buttons
+- Emergency Stop/Pull-out buttons
+- Basic streaming functionality
 - Might currently look a bit ugly but should also run on iPad/Vision Pro
 ### How do I install it?
-**sry, you need a mac for this one :(**
+**sry, you need a Mac for this one :(**
 
 - clone the repo
 - open it in Xcode
@@ -21,7 +23,7 @@
 
 I'll also try to provide IPAs so you can just sideload those - might even do an AppStore release but only with official permission
 ### Future stuff planned?
-- if theres something you'd like to see in here, feel free to create an issue and I'll see what i can do
+- if there's something you'd like to see in here, feel free to create an issue and I'll see what I can do
 
 ### Cool stuff, do you like money?
 Sure ^^ feel free to [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/X8X61TMGU0)
