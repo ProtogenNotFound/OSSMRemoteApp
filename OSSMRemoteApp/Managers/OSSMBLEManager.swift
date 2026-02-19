@@ -882,7 +882,6 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                         self.currentRootState = state.state
                     }
                 }
-                print("[OSSM] State update: \(state.state.rawValue)")
             } else if let jsonString = String(data: data, encoding: .utf8) {
                 print("[OSSM] Failed to parse state JSON: \(jsonString)")
             }
