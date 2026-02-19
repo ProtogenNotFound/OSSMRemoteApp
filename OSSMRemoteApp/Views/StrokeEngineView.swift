@@ -4,8 +4,20 @@
 //
 
 import SwiftUI
+import SwiftData
 
 struct StrokeEngineView: View {
+
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) private var presets: [StrokeEnginePreset]
+
+    @State private var selectedPresetID: UUID?
+    @State private var suppressPresetSelectionApply = false
+    @State private var showPresetEditor: Bool = false
+    @State private var showAddPresetPrompt: Bool = false
+    @State private var newPresetName: String = ""
+    @State private var showPresetError = false
+    @State private var presetErrorMessage = ""
 
     @EnvironmentObject private var bleManager: OSSMBLEManager
 
@@ -15,9 +27,6 @@ struct StrokeEngineView: View {
     @State private var sensation: Double = 50
     @State private var selectedPattern: Int = 0
 
-    @State private var isUpdating = false
-    @State private var showError = false
-    @State private var errorMessage = ""
     @State private var showSensationInfo: Bool = false
 
     // Dragging state tracking
@@ -65,8 +74,52 @@ struct StrokeEngineView: View {
         availablePatterns.first(where: { $0.idx == selectedPattern })
     }
 
+    private var selectedPreset: StrokeEnginePreset? {
+        guard let selectedPresetID else { return nil }
+        return presets.first(where: { $0.id == selectedPresetID })
+    }
+
+    private var suggestedPresetName: String {
+        let existingNames = Set(presets.map { $0.name.lowercased() })
+        var index = 1
+        while existingNames.contains("preset \(index)") {
+            index += 1
+        }
+        return "Preset \(index)"
+    }
+
     var body: some View {
         List {
+            Section("Presets") {
+                HStack {
+                    Picker("Selected:", selection: $selectedPresetID) {
+                        Text("None").tag(Optional<UUID>.none)
+                        ForEach(presets) { preset in
+                            Text(preset.name).tag(Optional(preset.id))
+                        }
+                    }
+                    .padding(.trailing)
+                    Button("Edit", systemImage: "pencil") {
+                        showPresetEditor.toggle()
+                    }
+                    Button("Add", systemImage: "plus") {
+                        newPresetName = suggestedPresetName
+                        showAddPresetPrompt = true
+                    }
+                }
+                .labelStyle(.iconOnly)
+                .buttonStyle(.borderless)
+
+                if let selectedPreset {
+                    Text(selectedPreset.summaryText)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                } else if presets.isEmpty {
+                    Text("No presets yet. Tap Add to save the current settings.")
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                }
+            }
             // Speed Control
             Section {
                 VStack(alignment: .leading) {
@@ -225,14 +278,14 @@ struct StrokeEngineView: View {
                             .presentationCompactAdaptation(.popover)
                     }
                     Spacer()
-                    Text("\(Int((sensation*2)-100))")
+                    Text("\(Int((sensation * 2) - 100))")
                         .foregroundColor(.secondary)
                 }
             }.disabled(selectedPatternInfo?.sensationDescription == nil)
 
             // Pattern Selection
             Section("Pattern") {
-                Picker("Pattern", selection: $selectedPattern) {
+                Picker("Selected:", selection: $selectedPattern) {
                     ForEach(availablePatterns) { pattern in
                         Section(pattern.name) {
                             Text(pattern.description ?? "")
@@ -249,7 +302,7 @@ struct StrokeEngineView: View {
                 }
             }
         }
-        .toolbar{
+        .toolbar {
             ToolbarItemGroup(placement: .bottomBar) {
                 Button {
                     bleManager.emergencyStop()
@@ -277,11 +330,42 @@ struct StrokeEngineView: View {
 
             }
         }
+        .sheet(isPresented: $showPresetEditor) {
+            StrokePresetManagerView(selectedPresetID: $selectedPresetID)
+                .presentationDetents([.medium, .large])
+        }
+        .alert("Save Preset", isPresented: $showAddPresetPrompt) {
+            TextField("Preset Name", text: $newPresetName)
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                saveCurrentValuesAsPreset(named: newPresetName)
+            }
+        } message: {
+            Text("Save current speed, stroke, depth, sensation, and pattern.")
+        }
+        .alert("Preset Error", isPresented: $showPresetError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(presetErrorMessage)
+        }
+        .onChange(of: selectedPresetID) { _, newValue in
+            guard !suppressPresetSelectionApply else {
+                suppressPresetSelectionApply = false
+                return
+            }
+            guard let newValue else { return }
+            guard let preset = presets.first(where: { $0.id == newValue }) else { return }
+            applyPreset(preset)
+        }
+        .onChange(of: presets.count) { _, _ in
+            ensureSelectedPresetStillExists()
+        }
         .monospacedDigit()
         .disabled(bleManager.currentPage != .strokeEngine)
         .navigationTitle("Stroke Engine")
         .onAppear {
             syncState()
+            ensureSelectedPresetStillExists()
         }
         .onReceive(bleManager.runtimeData.$currentState) { _ in
             syncState()
@@ -382,6 +466,53 @@ struct StrokeEngineView: View {
                 selectedPattern = state.pattern
             }
         }
+    }
+
+    private func ensureSelectedPresetStillExists() {
+        guard let selectedPresetID else { return }
+        if !presets.contains(where: { $0.id == selectedPresetID }) {
+            self.selectedPresetID = nil
+        }
+    }
+
+    private func saveCurrentValuesAsPreset(named rawName: String) {
+        let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let name = trimmedName.isEmpty ? suggestedPresetName : trimmedName
+
+        let preset = StrokeEnginePreset(
+            name: name,
+            speed: clampSliderValue(Int(speed)),
+            stroke: clampSliderValue(Int(stroke)),
+            depth: clampSliderValue(Int(depth)),
+            sensation: clampSliderValue(Int(sensation)),
+            pattern: selectedPattern,
+            sortOrder: (presets.map(\.sortOrder).max() ?? -1) + 1
+        )
+
+        modelContext.insert(preset)
+        do {
+            try modelContext.save()
+            suppressPresetSelectionApply = true
+            selectedPresetID = preset.id
+        } catch {
+            modelContext.delete(preset)
+            presetErrorMessage = "Could not save preset: \(error.localizedDescription)"
+            showPresetError = true
+        }
+    }
+
+    private func applyPreset(_ preset: StrokeEnginePreset) {
+        logSlider("Applying preset '\(preset.name)'")
+        lastInteractionTime = Date()
+        if selectedPattern != preset.pattern {
+            selectedPattern = preset.pattern
+        } else {
+            bleManager.setPattern(preset.pattern)
+        }
+        commitSpeed(preset.speed, source: .presetLoad)
+        commitStroke(preset.stroke, source: .presetLoad)
+        commitDepth(preset.depth, source: .presetLoad)
+        commitSensation(preset.sensation, source: .presetLoad)
     }
 
     private func adjustSpeed(by delta: Int) {
@@ -508,5 +639,205 @@ struct StrokeEngineView: View {
     private enum SliderUpdateSource: String {
         case sliderRelease = "slider"
         case buttonTap = "button"
+        case presetLoad = "preset"
     }
 }
+
+private struct StrokePresetManagerView: View {
+    @Binding var selectedPresetID: UUID?
+
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) private var presets: [StrokeEnginePreset]
+
+    @State private var showSaveError = false
+    @State private var saveErrorMessage = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                if presets.isEmpty {
+                    Text("No presets saved.")
+                        .foregroundColor(.secondary)
+                } else {
+                    ForEach(presets) { preset in
+                        NavigationLink {
+                            StrokePresetDetailView(preset: preset)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(preset.name)
+                                Text(preset.summaryText)
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+                    .onDelete(perform: deletePresets)
+                    .onMove(perform: movePresets)
+                }
+            }
+            .navigationTitle("Edit Presets")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    if !presets.isEmpty {
+                        EditButton()
+                    }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert("Preset Error", isPresented: $showSaveError) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text(saveErrorMessage)
+            }
+        }
+    }
+
+    private func deletePresets(at offsets: IndexSet) {
+        let removedIDs = offsets.map { presets[$0].id }
+        var remainingPresets = presets
+        remainingPresets.remove(atOffsets: offsets)
+        for (index, preset) in remainingPresets.enumerated() {
+            preset.sortOrder = index
+        }
+        for index in offsets {
+            modelContext.delete(presets[index])
+        }
+        if let selectedPresetID, removedIDs.contains(selectedPresetID) {
+            self.selectedPresetID = nil
+        }
+        persistChanges()
+    }
+
+    private func movePresets(from source: IndexSet, to destination: Int) {
+        var reorderedPresets = presets
+        reorderedPresets.move(fromOffsets: source, toOffset: destination)
+        for (index, preset) in reorderedPresets.enumerated() {
+            preset.sortOrder = index
+        }
+        persistChanges()
+    }
+
+    private func persistChanges() {
+        do {
+            try modelContext.save()
+        } catch {
+            saveErrorMessage = "Could not save preset changes: \(error.localizedDescription)"
+            showSaveError = true
+        }
+    }
+}
+
+private struct StrokePresetDetailView: View {
+    @Bindable var preset: StrokeEnginePreset
+
+    @Environment(\.modelContext) private var modelContext
+
+    @State private var showSaveError = false
+    @State private var saveErrorMessage = ""
+
+    private let valueRange: ClosedRange<Double> = 0...100
+
+    var body: some View {
+        Form {
+            Section("Name") {
+                TextField("Preset Name", text: $preset.name)
+            }
+            Section("Parameters") {
+                parameterSliderRow(
+                    title: "Speed",
+                    valueText: "\(preset.speed)%",
+                    binding: sliderBinding(for: \.speed)
+                )
+                parameterSliderRow(
+                    title: "Stroke",
+                    valueText: "\(preset.stroke)%",
+                    binding: sliderBinding(for: \.stroke)
+                )
+                parameterSliderRow(
+                    title: "Depth",
+                    valueText: "\(preset.depth)%",
+                    binding: sliderBinding(for: \.depth)
+                )
+                parameterSliderRow(
+                    title: "Sensation",
+                    valueText: "\(Int((Double(preset.sensation) * 2) - 100))",
+                    binding: sliderBinding(for: \.sensation)
+                )
+            }
+            Section("Pattern") {
+                Picker("Selected:", selection: $preset.pattern) {
+                    ForEach(KnownPattern.allCases) { pattern in
+                        Text(pattern.name).tag(pattern.rawValue)
+                    }
+                }
+            }
+        }
+        .navigationTitle("Preset")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Save") {
+                    save()
+                }
+            }
+        }
+        .alert("Preset Error", isPresented: $showSaveError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(saveErrorMessage)
+        }
+    }
+
+    @ViewBuilder
+    private func parameterSliderRow(title: String, valueText: String, binding: Binding<Double>) -> some View {
+        VStack(alignment: .leading) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text(valueText)
+                    .foregroundColor(.secondary)
+            }
+            Slider(value: binding, in: valueRange, step: 1)
+        }
+    }
+
+    private func sliderBinding(for keyPath: ReferenceWritableKeyPath<StrokeEnginePreset, Int>) -> Binding<Double> {
+        Binding(
+            get: {
+                Double(preset[keyPath: keyPath])
+            },
+            set: { newValue in
+                preset[keyPath: keyPath] = max(0, min(100, Int(newValue.rounded())))
+            }
+        )
+    }
+
+    private func save() {
+        let trimmedName = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        preset.name = trimmedName.isEmpty ? "Preset" : trimmedName
+        preset.speed = max(0, min(100, preset.speed))
+        preset.stroke = max(0, min(100, preset.stroke))
+        preset.depth = max(0, min(100, preset.depth))
+        preset.sensation = max(0, min(100, preset.sensation))
+
+        do {
+            try modelContext.save()
+        } catch {
+            saveErrorMessage = "Could not save preset: \(error.localizedDescription)"
+            showSaveError = true
+        }
+    }
+}
+
+private extension StrokeEnginePreset {
+    var summaryText: String {
+        "Speed \(speed)% · Stroke \(stroke)% · Depth \(depth)% · Sensation \(Int((Double(sensation) * 2) - 100)) · Pattern \(pattern)"
+    }
+}
+
