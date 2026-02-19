@@ -18,6 +18,8 @@ struct StrokeEngineView: View {
     @State private var newPresetName: String = ""
     @State private var showPresetError = false
     @State private var presetErrorMessage = ""
+    @State private var showHighSpeedPresetWarning = false
+    @State private var pendingPresetActivationID: UUID?
 
     @EnvironmentObject private var bleManager: OSSMBLEManager
 
@@ -51,6 +53,7 @@ struct StrokeEngineView: View {
 
     private let sliderRange: ClosedRange<Int> = 0...100
     private let sliderStepAmount: Int = 5
+    private let highSpeedPresetThreshold: Int = 20
     private let pendingSliderSyncTimeout: TimeInterval = 4.0
     private let pendingLogThrottle: TimeInterval = 0.5
     private let sliderDebugLogging: Bool = true
@@ -77,6 +80,11 @@ struct StrokeEngineView: View {
     private var selectedPreset: StrokeEnginePreset? {
         guard let selectedPresetID else { return nil }
         return presets.first(where: { $0.id == selectedPresetID })
+    }
+
+    private var pendingPresetActivation: StrokeEnginePreset? {
+        guard let pendingPresetActivationID else { return nil }
+        return presets.first(where: { $0.id == pendingPresetActivationID })
     }
 
     private var suggestedPresetName: String {
@@ -348,14 +356,25 @@ struct StrokeEngineView: View {
         } message: {
             Text(presetErrorMessage)
         }
-        .onChange(of: selectedPresetID) { _, newValue in
-            guard !suppressPresetSelectionApply else {
-                suppressPresetSelectionApply = false
-                return
+        .alert("High Speed Preset", isPresented: $showHighSpeedPresetWarning) {
+            Button("Hell yeah >:3") {
+                confirmPendingPresetActivation()
             }
-            guard let newValue else { return }
-            guard let preset = presets.first(where: { $0.id == newValue }) else { return }
-            applyPreset(preset)
+            Button("Set Speed to 0") {
+                confirmPendingPresetActivation(speedOverride: 0)
+            }
+            Button("Cancel", role: .cancel) {
+                clearPendingPresetActivation()
+            }
+        } message: {
+            if let pendingPresetActivation {
+                Text("\"\(pendingPresetActivation.name)\" is set to \(pendingPresetActivation.speed)% speed. Select how you want to continue.")
+            } else {
+                Text("The selected preset exceeds \(highSpeedPresetThreshold)% speed. Thats pretty fast :3 are you sure?")
+            }
+        }
+        .onChange(of: selectedPresetID) { oldValue, newValue in
+            handlePresetSelectionChange(from: oldValue, to: newValue)
         }
         .onChange(of: presets.count) { _, _ in
             ensureSelectedPresetStillExists()
@@ -501,18 +520,58 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func applyPreset(_ preset: StrokeEnginePreset) {
-        logSlider("Applying preset '\(preset.name)'")
+    private func applyPreset(_ preset: StrokeEnginePreset, speedOverride: Int? = nil) {
+        let targetSpeed = speedOverride ?? preset.speed
+        logSlider("Applying preset '\(preset.name)' at speed \(targetSpeed)%")
         lastInteractionTime = Date()
         if selectedPattern != preset.pattern {
             selectedPattern = preset.pattern
         } else {
             bleManager.setPattern(preset.pattern)
         }
-        commitSpeed(preset.speed, source: .presetLoad)
+        commitSpeed(targetSpeed, source: .presetLoad)
         commitStroke(preset.stroke, source: .presetLoad)
         commitDepth(preset.depth, source: .presetLoad)
         commitSensation(preset.sensation, source: .presetLoad)
+    }
+
+    private func handlePresetSelectionChange(from oldValue: UUID?, to newValue: UUID?) {
+        guard !suppressPresetSelectionApply else {
+            suppressPresetSelectionApply = false
+            return
+        }
+
+        guard oldValue != newValue else { return }
+        guard let newValue else { return }
+        guard let preset = presets.first(where: { $0.id == newValue }) else { return }
+
+        if preset.speed > highSpeedPresetThreshold {
+            pendingPresetActivationID = preset.id
+            suppressPresetSelectionApply = true
+            selectedPresetID = oldValue
+            showHighSpeedPresetWarning = true
+            return
+        }
+
+        applyPreset(preset)
+    }
+
+    private func confirmPendingPresetActivation(speedOverride: Int? = nil) {
+        guard let pendingPresetActivationID,
+              let preset = presets.first(where: { $0.id == pendingPresetActivationID }) else {
+            clearPendingPresetActivation()
+            return
+        }
+
+        suppressPresetSelectionApply = true
+        selectedPresetID = preset.id
+        applyPreset(preset, speedOverride: speedOverride)
+        clearPendingPresetActivation()
+    }
+
+    private func clearPendingPresetActivation() {
+        pendingPresetActivationID = nil
+        showHighSpeedPresetWarning = false
     }
 
     private func adjustSpeed(by delta: Int) {
@@ -840,4 +899,3 @@ private extension StrokeEnginePreset {
         "Speed \(speed)% · Stroke \(stroke)% · Depth \(depth)% · Sensation \(Int((Double(sensation) * 2) - 100)) · Pattern \(pattern)"
     }
 }
-
