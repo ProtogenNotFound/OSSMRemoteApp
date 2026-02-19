@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import SwiftData
 
 @main
 struct OSSMRemoteAppApp: App {
@@ -15,5 +16,6 @@ struct OSSMRemoteAppApp: App {
             OSSMControlView()
                 .environmentObject(bleManager)
         }
+        .modelContainer(for: [StrokeEnginePreset.self])
     }
 }
