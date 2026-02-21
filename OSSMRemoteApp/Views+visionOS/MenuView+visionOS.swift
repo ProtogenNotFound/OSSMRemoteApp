@@ -1,26 +1,13 @@
 //
-//  MenuView.swift
+//  MenuView+visionOS.swift
 //  OSSM Control
 //
 
 import SwiftUI
 
-struct MenuView: PlatformSplitView {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-    @AppStorage("savedUUID") var savedUUID: String?
-    @State var symbolSize = CGSize(.zero)
-
-    var ossmImage: some View {
-        Color.white
-            .mask{
-                Image("ossm")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-            }
-    }
-
-    #if !os(visionOS)
-    var iosBody: some View {
+#if os(visionOS)
+extension MenuView {
+    var visionBody: some View {
         HStack(alignment: .bottom) {
             NavigationLink(value: OSSMPage.strokeEngine){
                 VStack {
@@ -110,15 +97,8 @@ struct MenuView: PlatformSplitView {
             }
         }
         .buttonBorderShape(.roundedRectangle(radius: 24))
-        .buttonStyle(.glassProminent)
         .frame(maxHeight: .infinity, alignment: .bottom)
         .padding()
     }
-    #endif
 }
-
-#Preview {
-    NavigationStack{
-        MenuView()
-    }
-}
+#endif
