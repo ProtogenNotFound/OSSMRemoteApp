@@ -5,9 +5,11 @@
 
 import SwiftUI
 
-struct SimplePenetrationView: View {
-    @EnvironmentObject private var bleManager: OSSMBLEManager
-    var body: some View {
+struct SimplePenetrationView: PlatformSplitView {
+    @EnvironmentObject var bleManager: OSSMBLEManager
+
+    #if !os(visionOS)
+    var iosBody: some View {
         Group{
             if bleManager.currentPage == .simplePenetration {
                 Text("Simple Penetration")
@@ -19,4 +21,5 @@ struct SimplePenetrationView: View {
             }
         }.navigationTitle("Simple Penetration")
     }
+    #endif
 }

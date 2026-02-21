@@ -5,10 +5,10 @@
 
 import SwiftUI
 
-struct MenuView: View {
-    @EnvironmentObject private var bleManager: OSSMBLEManager
-    @AppStorage("savedUUID") private var savedUUID: String?
-    @State private var symbolSize = CGSize(.zero)
+struct MenuView: PlatformSplitView {
+    @EnvironmentObject var bleManager: OSSMBLEManager
+    @AppStorage("savedUUID") var savedUUID: String?
+    @State var symbolSize = CGSize(.zero)
 
     var ossmImage: some View {
         Color.white
@@ -19,7 +19,8 @@ struct MenuView: View {
             }
     }
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         HStack(alignment: .bottom) {
             NavigationLink(value: OSSMPage.strokeEngine){
                 VStack {
@@ -108,11 +109,12 @@ struct MenuView: View {
 
             }
         }
-            .buttonBorderShape(.roundedRectangle(radius: 24))
-            .buttonStyle(.glassProminent)
-            .frame(maxHeight: .infinity, alignment: .bottom)
-            .padding()
+        .buttonBorderShape(.roundedRectangle(radius: 24))
+        .buttonStyle(.glassProminent)
+        .frame(maxHeight: .infinity, alignment: .bottom)
+        .padding()
     }
+    #endif
 }
 
 #Preview {

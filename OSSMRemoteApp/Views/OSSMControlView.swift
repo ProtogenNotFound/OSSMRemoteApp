@@ -8,23 +8,23 @@
 import SwiftUI
 import CoreBluetooth
 
-struct OSSMControlView: View {
-    @AppStorage("homingForwardTime") private var homingForwardTime: Double?
-    @AppStorage("homingBackwardTime") private var homingBackwardTime: Double?
-    @EnvironmentObject private var bleManager: OSSMBLEManager
-    @State private var path: [OSSMPage] = []
-    @AppStorage("savedUUID") private var savedUUID: String?
-    @State private var showError: Bool = false
-    @State private var errorMessage: String = ""
+struct OSSMControlView: PlatformSplitView {
+    @AppStorage("homingForwardTime") var homingForwardTime: Double?
+    @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
+    @EnvironmentObject var bleManager: OSSMBLEManager
+    @State var path: [OSSMPage] = []
+    @AppStorage("savedUUID") var savedUUID: String?
+    @State var showError: Bool = false
+    @State var errorMessage: String = ""
 
     // Dragging state tracking
     // Removed redundant state variables to prevent flickering
 
     // Homing sheet animation toggle (true for 1.5s, false for 0.5s)
-    @State private var homingPulse = false
-    @State private var homingPulseTask: Task<Void, Never>? = nil
+    @State var homingPulse = false
+    @State var homingPulseTask: Task<Void, Never>? = nil
 
-    fileprivate func resetAppStorage() {
+    func resetAppStorage() {
         // Remove saved device so we don't auto-reconnect
         savedUUID = nil
         homingBackwardTime = nil
@@ -32,7 +32,7 @@ struct OSSMControlView: View {
     }
 
     @ToolbarContentBuilder
-    private var toolbarMenu: some ToolbarContent {
+    var toolbarMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
             Menu {
                 Section("Connection Status"){
@@ -64,7 +64,8 @@ struct OSSMControlView: View {
         }
     }
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         NavigationStack (path: $path){
             Group {
                 if bleManager.connectionStatus == .ready {
@@ -142,11 +143,12 @@ struct OSSMControlView: View {
             }
         }
     }
+    #endif
 
     // MARK: - Subviews
 
 
-    private var disconnectedView: some View {
+    var disconnectedView: some View {
         VStack(spacing: 20) {
             Image(systemName: "antenna.radiowaves.left.and.right.slash")
                 .font(.system(size: 60))
@@ -164,7 +166,7 @@ struct OSSMControlView: View {
         .padding()
     }
 
-    private var scanningView: some View {
+    var scanningView: some View {
         VStack(spacing: 20) {
             ProgressView()
                 .scaleEffect(1.5)
@@ -175,7 +177,8 @@ struct OSSMControlView: View {
         .padding()
     }
 
-    private var savedDeviceReconnectView: some View {
+    #if !os(visionOS)
+    var savedDeviceReconnectView: some View {
         let found = !bleManager.discoveredPeripherals.isEmpty
         return VStack(spacing: 16) {
             Color.primary
@@ -208,8 +211,9 @@ struct OSSMControlView: View {
         .animation(.easeInOut, value: found)
         .padding()
     }
+    #endif
 
-    private var deviceListView: some View {
+    var deviceListView: some View {
         List {
             Section("Discovered Devices") {
                 ForEach(bleManager.discoveredPeripherals, id: \.identifier) { peripheral in
@@ -243,7 +247,7 @@ struct OSSMControlView: View {
     }
 
 
-    private var connectionStatusView: some View {
+    var connectionStatusView: some View {
         HStack(spacing: 4) {
             Circle()
                 .fill(statusColor)
@@ -253,7 +257,7 @@ struct OSSMControlView: View {
         }
     }
 
-    private var statusColor: Color {
+    var statusColor: Color {
         switch bleManager.connectionStatus {
         case .ready:
             return .green
@@ -269,7 +273,7 @@ struct OSSMControlView: View {
     // MARK: - Actions
 
     @MainActor
-    private func startHomingPulseLoop() {
+    func startHomingPulseLoop() {
         // Avoid creating multiple loops if SwiftUI re-renders
         homingPulseTask?.cancel()
         homingPulseTask = Task { @MainActor in
@@ -283,13 +287,13 @@ struct OSSMControlView: View {
     }
 
     @MainActor
-    private func stopHomingPulseLoop() {
+    func stopHomingPulseLoop() {
         homingPulseTask?.cancel()
         homingPulseTask = nil
         homingPulse = false
     }
 
-    private func tryConnectIfSaved() {
+    func tryConnectIfSaved() {
         guard let saved = savedUUID else { return }
         // Attempt to find a matching peripheral by UUID among discovered peripherals and connect
         if let match = bleManager.discoveredPeripherals.first(where: { $0.identifier.uuidString == saved }) {

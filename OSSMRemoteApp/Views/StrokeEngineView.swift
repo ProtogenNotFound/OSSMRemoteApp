@@ -6,81 +6,81 @@
 import SwiftUI
 import SwiftData
 
-struct StrokeEngineView: View {
+struct StrokeEngineView: PlatformSplitView {
 
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) private var presets: [StrokeEnginePreset]
+    @Environment(\.modelContext) var modelContext
+    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) var presets: [StrokeEnginePreset]
 
-    @State private var selectedPresetID: UUID?
-    @State private var suppressPresetSelectionApply = false
-    @State private var showPresetEditor: Bool = false
-    @State private var showAddPresetPrompt: Bool = false
-    @State private var newPresetName: String = ""
-    @State private var showPresetError = false
-    @State private var presetErrorMessage = ""
-    @State private var showHighSpeedPresetWarning = false
-    @State private var pendingPresetActivationID: UUID?
-    @State private var showSettings = false
+    @State var selectedPresetID: UUID?
+    @State var suppressPresetSelectionApply = false
+    @State var showPresetEditor: Bool = false
+    @State var showAddPresetPrompt: Bool = false
+    @State var newPresetName: String = ""
+    @State var showPresetError = false
+    @State var presetErrorMessage = ""
+    @State var showHighSpeedPresetWarning = false
+    @State var pendingPresetActivationID: UUID?
+    @State var showSettings = false
 
-    @EnvironmentObject private var bleManager: OSSMBLEManager
-    @AppStorage("strokeEngine.settings.showPresetsSection") private var showPresetsSection = true
-    @AppStorage("strokeEngine.settings.highSpeedWarningEnabled") private var highSpeedWarningEnabled = true
-    @AppStorage("strokeEngine.settings.highSpeedWarningThreshold") private var highSpeedWarningThresholdSetting = 20
-    @AppStorage("strokeEngine.settings.speedStepAmount") private var speedStepAmountSetting = 5
-    @AppStorage("strokeEngine.settings.strokeStepAmount") private var strokeStepAmountSetting = 5
-    @AppStorage("strokeEngine.settings.depthStepAmount") private var depthStepAmountSetting = 5
-    @AppStorage("strokeEngine.settings.sensationStepAmount") private var sensationStepAmountSetting = 5
-    @AppStorage("strokeEngine.settings.sliderDebugLogging") private var sliderDebugLogging = true
+    @EnvironmentObject var bleManager: OSSMBLEManager
+    @AppStorage("strokeEngine.settings.showPresetsSection") var showPresetsSection = true
+    @AppStorage("strokeEngine.settings.highSpeedWarningEnabled") var highSpeedWarningEnabled = true
+    @AppStorage("strokeEngine.settings.highSpeedWarningThreshold") var highSpeedWarningThresholdSetting = 20
+    @AppStorage("strokeEngine.settings.speedStepAmount") var speedStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.strokeStepAmount") var strokeStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.depthStepAmount") var depthStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.sensationStepAmount") var sensationStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.sliderDebugLogging") var sliderDebugLogging = true
 
-    @State private var speed: Double = 0
-    @State private var stroke: Double = 50
-    @State private var depth: Double = 50
-    @State private var sensation: Double = 50
-    @State private var selectedPattern: Int = 0
+    @State var speed: Double = 0
+    @State var stroke: Double = 50
+    @State var depth: Double = 50
+    @State var sensation: Double = 50
+    @State var selectedPattern: Int = 0
 
-    @State private var showSensationInfo: Bool = false
+    @State var showSensationInfo: Bool = false
 
     // Dragging state tracking
-    @State private var isDraggingSpeed = false
-    @State private var isDraggingStroke = false
-    @State private var isDraggingDepth = false
-    @State private var isDraggingSensation = false
+    @State var isDraggingSpeed = false
+    @State var isDraggingStroke = false
+    @State var isDraggingDepth = false
+    @State var isDraggingSensation = false
 
-    @State private var pendingSpeedTarget: Int?
-    @State private var pendingSpeedTargetSetAt: Date = .distantPast
-    @State private var pendingStrokeTarget: Int?
-    @State private var pendingStrokeTargetSetAt: Date = .distantPast
-    @State private var pendingDepthTarget: Int?
-    @State private var pendingDepthTargetSetAt: Date = .distantPast
-    @State private var pendingSensationTarget: Int?
-    @State private var pendingSensationTargetSetAt: Date = .distantPast
+    @State var pendingSpeedTarget: Int?
+    @State var pendingSpeedTargetSetAt: Date = .distantPast
+    @State var pendingStrokeTarget: Int?
+    @State var pendingStrokeTargetSetAt: Date = .distantPast
+    @State var pendingDepthTarget: Int?
+    @State var pendingDepthTargetSetAt: Date = .distantPast
+    @State var pendingSensationTarget: Int?
+    @State var pendingSensationTargetSetAt: Date = .distantPast
 
-    @State private var lastSpeedPendingLogAt: Date = .distantPast
-    @State private var lastStrokePendingLogAt: Date = .distantPast
-    @State private var lastDepthPendingLogAt: Date = .distantPast
-    @State private var lastSensationPendingLogAt: Date = .distantPast
+    @State var lastSpeedPendingLogAt: Date = .distantPast
+    @State var lastStrokePendingLogAt: Date = .distantPast
+    @State var lastDepthPendingLogAt: Date = .distantPast
+    @State var lastSensationPendingLogAt: Date = .distantPast
 
-    private let sliderRange: ClosedRange<Int> = 0...100
-    private let settingsRange: ClosedRange<Int> = 1...100
-    private let pendingSliderSyncTimeout: TimeInterval = 4.0
-    private let pendingLogThrottle: TimeInterval = 0.5
-    private var highSpeedPresetThreshold: Int {
+    let sliderRange: ClosedRange<Int> = 0...100
+    let settingsRange: ClosedRange<Int> = 1...100
+    let pendingSliderSyncTimeout: TimeInterval = 4.0
+    let pendingLogThrottle: TimeInterval = 0.5
+    var highSpeedPresetThreshold: Int {
         clampSettingsValue(highSpeedWarningThresholdSetting)
     }
-    private var speedStepAmount: Int {
+    var speedStepAmount: Int {
         clampSettingsValue(speedStepAmountSetting)
     }
-    private var strokeStepAmount: Int {
+    var strokeStepAmount: Int {
         clampSettingsValue(strokeStepAmountSetting)
     }
-    private var depthStepAmount: Int {
+    var depthStepAmount: Int {
         clampSettingsValue(depthStepAmountSetting)
     }
-    private var sensationStepAmount: Int {
+    var sensationStepAmount: Int {
         clampSettingsValue(sensationStepAmountSetting)
     }
 
-    private var availablePatterns: [OSSMPattern] {
+    var availablePatterns: [OSSMPattern] {
         if bleManager.patterns.isEmpty {
             return KnownPattern.allCases.map { pattern in
                 OSSMPattern(
@@ -95,21 +95,21 @@ struct StrokeEngineView: View {
         return bleManager.patterns.sorted { $0.idx < $1.idx }
     }
 
-    private var selectedPatternInfo: OSSMPattern? {
+    var selectedPatternInfo: OSSMPattern? {
         availablePatterns.first(where: { $0.idx == selectedPattern })
     }
 
-    private var selectedPreset: StrokeEnginePreset? {
+    var selectedPreset: StrokeEnginePreset? {
         guard let selectedPresetID else { return nil }
         return presets.first(where: { $0.id == selectedPresetID })
     }
 
-    private var pendingPresetActivation: StrokeEnginePreset? {
+    var pendingPresetActivation: StrokeEnginePreset? {
         guard let pendingPresetActivationID else { return nil }
         return presets.first(where: { $0.id == pendingPresetActivationID })
     }
 
-    private var suggestedPresetName: String {
+    var suggestedPresetName: String {
         let existingNames = Set(presets.map { $0.name.lowercased() })
         var index = 1
         while existingNames.contains("preset \(index)") {
@@ -118,7 +118,8 @@ struct StrokeEngineView: View {
         return "Preset \(index)"
     }
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         List {
             if showPresetsSection {
                 Section("Presets") {
@@ -434,11 +435,12 @@ struct StrokeEngineView: View {
             syncState()
         }
     }
+    #endif
 
     // Lockout timer to prevent incoming packets from resetting selection while user is interacting
-    @State private var lastInteractionTime: Date = Date.distantPast
+    @State var lastInteractionTime: Date = Date.distantPast
 
-    private func syncState() {
+    func syncState() {
         let state = bleManager.runtimeData.currentState
         let now = Date()
 
@@ -531,14 +533,14 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func ensureSelectedPresetStillExists() {
+    func ensureSelectedPresetStillExists() {
         guard let selectedPresetID else { return }
         if !presets.contains(where: { $0.id == selectedPresetID }) {
             self.selectedPresetID = nil
         }
     }
 
-    private func saveCurrentValuesAsPreset(named rawName: String) {
+    func saveCurrentValuesAsPreset(named rawName: String) {
         let trimmedName = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
         let name = trimmedName.isEmpty ? suggestedPresetName : trimmedName
 
@@ -564,7 +566,7 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func applyPreset(_ preset: StrokeEnginePreset, speedOverride: Int? = nil) {
+    func applyPreset(_ preset: StrokeEnginePreset, speedOverride: Int? = nil) {
         let targetSpeed = speedOverride ?? preset.speed
         logSlider("Applying preset '\(preset.name)' at speed \(targetSpeed)%")
         lastInteractionTime = Date()
@@ -579,7 +581,7 @@ struct StrokeEngineView: View {
         commitSensation(preset.sensation, source: .presetLoad)
     }
 
-    private func handlePresetSelectionChange(from oldValue: UUID?, to newValue: UUID?) {
+    func handlePresetSelectionChange(from oldValue: UUID?, to newValue: UUID?) {
         guard !suppressPresetSelectionApply else {
             suppressPresetSelectionApply = false
             return
@@ -600,7 +602,7 @@ struct StrokeEngineView: View {
         applyPreset(preset)
     }
 
-    private func confirmPendingPresetActivation(speedOverride: Int? = nil) {
+    func confirmPendingPresetActivation(speedOverride: Int? = nil) {
         guard let pendingPresetActivationID,
               let preset = presets.first(where: { $0.id == pendingPresetActivationID }) else {
             clearPendingPresetActivation()
@@ -613,36 +615,36 @@ struct StrokeEngineView: View {
         clearPendingPresetActivation()
     }
 
-    private func clearPendingPresetActivation() {
+    func clearPendingPresetActivation() {
         pendingPresetActivationID = nil
         showHighSpeedPresetWarning = false
     }
 
-    private func adjustSpeed(by delta: Int) {
+    func adjustSpeed(by delta: Int) {
         logSlider("Tap speed \(delta > 0 ? "+" : "-")")
         isDraggingSpeed = false
         commitSpeed(Int(speed) + delta, source: .buttonTap)
     }
 
-    private func adjustStroke(by delta: Int) {
+    func adjustStroke(by delta: Int) {
         logSlider("Tap stroke \(delta > 0 ? "+" : "-")")
         isDraggingStroke = false
         commitStroke(Int(stroke) + delta, source: .buttonTap)
     }
 
-    private func adjustDepth(by delta: Int) {
+    func adjustDepth(by delta: Int) {
         logSlider("Tap depth \(delta > 0 ? "+" : "-")")
         isDraggingDepth = false
         commitDepth(Int(depth) + delta, source: .buttonTap)
     }
 
-    private func adjustSensation(by delta: Int) {
+    func adjustSensation(by delta: Int) {
         logSlider("Tap sensation \(delta > 0 ? "+" : "-")")
         isDraggingSensation = false
         commitSensation(Int(sensation) + delta, source: .buttonTap)
     }
 
-    private func commitSpeed(_ value: Int, source: SliderUpdateSource) {
+    func commitSpeed(_ value: Int, source: SliderUpdateSource) {
         let clampedValue = clampSliderValue(value)
         logSlider("Commit speed (\(source.rawValue)): \(Int(speed)) -> \(clampedValue)")
         speed = Double(clampedValue)
@@ -658,7 +660,7 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func commitStroke(_ value: Int, source: SliderUpdateSource) {
+    func commitStroke(_ value: Int, source: SliderUpdateSource) {
         let clampedValue = clampSliderValue(value)
         logSlider("Commit stroke (\(source.rawValue)): \(Int(stroke)) -> \(clampedValue)")
         stroke = Double(clampedValue)
@@ -674,7 +676,7 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func commitDepth(_ value: Int, source: SliderUpdateSource) {
+    func commitDepth(_ value: Int, source: SliderUpdateSource) {
         let clampedValue = clampSliderValue(value)
         logSlider("Commit depth (\(source.rawValue)): \(Int(depth)) -> \(clampedValue)")
         depth = Double(clampedValue)
@@ -690,7 +692,7 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func commitSensation(_ value: Int, source: SliderUpdateSource) {
+    func commitSensation(_ value: Int, source: SliderUpdateSource) {
         let clampedValue = clampSliderValue(value)
         logSlider("Commit sensation (\(source.rawValue)): \(Int(sensation)) -> \(clampedValue)")
         sensation = Double(clampedValue)
@@ -706,15 +708,15 @@ struct StrokeEngineView: View {
         }
     }
 
-    private func clampSliderValue(_ value: Int) -> Int {
+    func clampSliderValue(_ value: Int) -> Int {
         max(sliderRange.lowerBound, min(sliderRange.upperBound, value))
     }
 
-    private func clampSettingsValue(_ value: Int) -> Int {
+    func clampSettingsValue(_ value: Int) -> Int {
         max(settingsRange.lowerBound, min(settingsRange.upperBound, value))
     }
 
-    private func clampedSettingsBinding(for binding: Binding<Int>) -> Binding<Int> {
+    func clampedSettingsBinding(for binding: Binding<Int>) -> Binding<Int> {
         Binding(
             get: {
                 clampSettingsValue(binding.wrappedValue)
@@ -725,7 +727,7 @@ struct StrokeEngineView: View {
         )
     }
 
-    private func sanitizeStoredSettings() {
+    func sanitizeStoredSettings() {
         highSpeedWarningThresholdSetting = clampSettingsValue(highSpeedWarningThresholdSetting)
         speedStepAmountSetting = clampSettingsValue(speedStepAmountSetting)
         strokeStepAmountSetting = clampSettingsValue(strokeStepAmountSetting)
@@ -733,43 +735,43 @@ struct StrokeEngineView: View {
         sensationStepAmountSetting = clampSettingsValue(sensationStepAmountSetting)
     }
 
-    private func clearPendingSpeedTarget() {
+    func clearPendingSpeedTarget() {
         pendingSpeedTarget = nil
         pendingSpeedTargetSetAt = .distantPast
         lastSpeedPendingLogAt = .distantPast
     }
 
-    private func clearPendingStrokeTarget() {
+    func clearPendingStrokeTarget() {
         pendingStrokeTarget = nil
         pendingStrokeTargetSetAt = .distantPast
         lastStrokePendingLogAt = .distantPast
     }
 
-    private func clearPendingDepthTarget() {
+    func clearPendingDepthTarget() {
         pendingDepthTarget = nil
         pendingDepthTargetSetAt = .distantPast
         lastDepthPendingLogAt = .distantPast
     }
 
-    private func clearPendingSensationTarget() {
+    func clearPendingSensationTarget() {
         pendingSensationTarget = nil
         pendingSensationTargetSetAt = .distantPast
         lastSensationPendingLogAt = .distantPast
     }
 
-    private func logSlider(_ message: String) {
+    func logSlider(_ message: String) {
         guard sliderDebugLogging else { return }
         print("[StrokeEngine][Slider] \(message)")
     }
 
-    private enum SliderUpdateSource: String {
+    enum SliderUpdateSource: String {
         case sliderRelease = "slider"
         case buttonTap = "button"
         case presetLoad = "preset"
     }
 }
 
-private struct StrokeEngineSettingsView: View {
+struct StrokeEngineSettingsView: PlatformSplitView {
     @Binding var showPresetsSection: Bool
     @Binding var highSpeedWarningEnabled: Bool
     @Binding var highSpeedWarningThreshold: Int
@@ -780,11 +782,12 @@ private struct StrokeEngineSettingsView: View {
     @Binding var sliderDebugLogging: Bool
     let settingsRange: ClosedRange<Int>
 
-    @State private var showSafeguardInfoPopover: Bool = false
+    @State var showSafeguardInfoPopover: Bool = false
 
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dismiss) var dismiss
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         NavigationStack {
             Form {
                 Section("Presets") {
@@ -848,9 +851,10 @@ private struct StrokeEngineSettingsView: View {
             }
         }
     }
+    #endif
 
     @ViewBuilder
-    private func stepperRow(title: String, value: Binding<Int>) -> some View {
+    func stepperRow(title: String, value: Binding<Int>) -> some View {
         Stepper(value: value, in: settingsRange) {
             HStack {
                 Text(title)
@@ -862,17 +866,18 @@ private struct StrokeEngineSettingsView: View {
     }
 }
 
-private struct StrokePresetManagerView: View {
+struct StrokePresetManagerView: PlatformSplitView {
     @Binding var selectedPresetID: UUID?
 
-    @Environment(\.dismiss) private var dismiss
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) private var presets: [StrokeEnginePreset]
+    @Environment(\.dismiss) var dismiss
+    @Environment(\.modelContext) var modelContext
+    @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) var presets: [StrokeEnginePreset]
 
-    @State private var showSaveError = false
-    @State private var saveErrorMessage = ""
+    @State var showSaveError = false
+    @State var saveErrorMessage = ""
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         NavigationStack {
             List {
                 if presets.isEmpty {
@@ -916,8 +921,9 @@ private struct StrokePresetManagerView: View {
             }
         }
     }
+    #endif
 
-    private func deletePresets(at offsets: IndexSet) {
+    func deletePresets(at offsets: IndexSet) {
         let removedIDs = offsets.map { presets[$0].id }
         var remainingPresets = presets
         remainingPresets.remove(atOffsets: offsets)
@@ -933,7 +939,7 @@ private struct StrokePresetManagerView: View {
         persistChanges()
     }
 
-    private func movePresets(from source: IndexSet, to destination: Int) {
+    func movePresets(from source: IndexSet, to destination: Int) {
         var reorderedPresets = presets
         reorderedPresets.move(fromOffsets: source, toOffset: destination)
         for (index, preset) in reorderedPresets.enumerated() {
@@ -942,7 +948,7 @@ private struct StrokePresetManagerView: View {
         persistChanges()
     }
 
-    private func persistChanges() {
+    func persistChanges() {
         do {
             try modelContext.save()
         } catch {
@@ -952,17 +958,18 @@ private struct StrokePresetManagerView: View {
     }
 }
 
-private struct StrokePresetDetailView: View {
+struct StrokePresetDetailView: PlatformSplitView {
     @Bindable var preset: StrokeEnginePreset
 
-    @Environment(\.modelContext) private var modelContext
+    @Environment(\.modelContext) var modelContext
 
-    @State private var showSaveError = false
-    @State private var saveErrorMessage = ""
+    @State var showSaveError = false
+    @State var saveErrorMessage = ""
 
-    private let valueRange: ClosedRange<Double> = 0...100
+    let valueRange: ClosedRange<Double> = 0...100
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         Form {
             Section("Name") {
                 TextField("Preset Name", text: $preset.name)
@@ -1012,9 +1019,10 @@ private struct StrokePresetDetailView: View {
             Text(saveErrorMessage)
         }
     }
+    #endif
 
     @ViewBuilder
-    private func parameterSliderRow(title: String, valueText: String, binding: Binding<Double>) -> some View {
+    func parameterSliderRow(title: String, valueText: String, binding: Binding<Double>) -> some View {
         VStack(alignment: .leading) {
             HStack {
                 Text(title)
@@ -1026,7 +1034,7 @@ private struct StrokePresetDetailView: View {
         }
     }
 
-    private func sliderBinding(for keyPath: ReferenceWritableKeyPath<StrokeEnginePreset, Int>) -> Binding<Double> {
+    func sliderBinding(for keyPath: ReferenceWritableKeyPath<StrokeEnginePreset, Int>) -> Binding<Double> {
         Binding(
             get: {
                 Double(preset[keyPath: keyPath])
@@ -1037,7 +1045,7 @@ private struct StrokePresetDetailView: View {
         )
     }
 
-    private func save() {
+    func save() {
         let trimmedName = preset.name.trimmingCharacters(in: .whitespacesAndNewlines)
         preset.name = trimmedName.isEmpty ? "Preset" : trimmedName
         preset.speed = max(0, min(100, preset.speed))
@@ -1054,7 +1062,7 @@ private struct StrokePresetDetailView: View {
     }
 }
 
-private extension StrokeEnginePreset {
+extension StrokeEnginePreset {
     var summaryText: String {
         "Speed \(speed)% · Stroke \(stroke)% · Depth \(depth)% · Sensation \(Int((Double(sensation) * 2) - 100)) · Pattern \(pattern)"
     }
