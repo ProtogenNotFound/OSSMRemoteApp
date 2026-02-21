@@ -20,8 +20,17 @@ struct StrokeEngineView: View {
     @State private var presetErrorMessage = ""
     @State private var showHighSpeedPresetWarning = false
     @State private var pendingPresetActivationID: UUID?
+    @State private var showSettings = false
 
     @EnvironmentObject private var bleManager: OSSMBLEManager
+    @AppStorage("strokeEngine.settings.showPresetsSection") private var showPresetsSection = true
+    @AppStorage("strokeEngine.settings.highSpeedWarningEnabled") private var highSpeedWarningEnabled = true
+    @AppStorage("strokeEngine.settings.highSpeedWarningThreshold") private var highSpeedWarningThresholdSetting = 20
+    @AppStorage("strokeEngine.settings.speedStepAmount") private var speedStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.strokeStepAmount") private var strokeStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.depthStepAmount") private var depthStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.sensationStepAmount") private var sensationStepAmountSetting = 5
+    @AppStorage("strokeEngine.settings.sliderDebugLogging") private var sliderDebugLogging = true
 
     @State private var speed: Double = 0
     @State private var stroke: Double = 50
@@ -52,11 +61,24 @@ struct StrokeEngineView: View {
     @State private var lastSensationPendingLogAt: Date = .distantPast
 
     private let sliderRange: ClosedRange<Int> = 0...100
-    private let sliderStepAmount: Int = 5
-    private let highSpeedPresetThreshold: Int = 20
+    private let settingsRange: ClosedRange<Int> = 1...100
     private let pendingSliderSyncTimeout: TimeInterval = 4.0
     private let pendingLogThrottle: TimeInterval = 0.5
-    private let sliderDebugLogging: Bool = true
+    private var highSpeedPresetThreshold: Int {
+        clampSettingsValue(highSpeedWarningThresholdSetting)
+    }
+    private var speedStepAmount: Int {
+        clampSettingsValue(speedStepAmountSetting)
+    }
+    private var strokeStepAmount: Int {
+        clampSettingsValue(strokeStepAmountSetting)
+    }
+    private var depthStepAmount: Int {
+        clampSettingsValue(depthStepAmountSetting)
+    }
+    private var sensationStepAmount: Int {
+        clampSettingsValue(sensationStepAmountSetting)
+    }
 
     private var availablePatterns: [OSSMPattern] {
         if bleManager.patterns.isEmpty {
@@ -98,34 +120,36 @@ struct StrokeEngineView: View {
 
     var body: some View {
         List {
-            Section("Presets") {
-                HStack {
-                    Picker("Selected:", selection: $selectedPresetID) {
-                        Text("None").tag(Optional<UUID>.none)
-                        ForEach(presets) { preset in
-                            Text(preset.name).tag(Optional(preset.id))
+            if showPresetsSection {
+                Section("Presets") {
+                    HStack {
+                        Picker("Selected:", selection: $selectedPresetID) {
+                            Text("None").tag(Optional<UUID>.none)
+                            ForEach(presets) { preset in
+                                Text(preset.name).tag(Optional(preset.id))
+                            }
+                        }
+                        .padding(.trailing)
+                        Button("Edit", systemImage: "pencil") {
+                            showPresetEditor.toggle()
+                        }
+                        Button("Add", systemImage: "plus") {
+                            newPresetName = suggestedPresetName
+                            showAddPresetPrompt = true
                         }
                     }
-                    .padding(.trailing)
-                    Button("Edit", systemImage: "pencil") {
-                        showPresetEditor.toggle()
-                    }
-                    Button("Add", systemImage: "plus") {
-                        newPresetName = suggestedPresetName
-                        showAddPresetPrompt = true
-                    }
-                }
-                .labelStyle(.iconOnly)
-                .buttonStyle(.borderless)
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
 
-                if let selectedPreset {
-                    Text(selectedPreset.summaryText)
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                } else if presets.isEmpty {
-                    Text("No presets yet. Tap Add to save the current settings.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                    if let selectedPreset {
+                        Text(selectedPreset.summaryText)
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    } else if presets.isEmpty {
+                        Text("No presets yet. Tap Add to save the current settings.")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
             // Speed Control
@@ -133,7 +157,7 @@ struct StrokeEngineView: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustSpeed(by: -sliderStepAmount)
+                            adjustSpeed(by: -speedStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -148,7 +172,7 @@ struct StrokeEngineView: View {
                         }
 
                         Button {
-                            adjustSpeed(by: sliderStepAmount)
+                            adjustSpeed(by: speedStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
@@ -171,7 +195,7 @@ struct StrokeEngineView: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustStroke(by: -sliderStepAmount)
+                            adjustStroke(by: -strokeStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -186,7 +210,7 @@ struct StrokeEngineView: View {
                         }
 
                         Button {
-                            adjustStroke(by: sliderStepAmount)
+                            adjustStroke(by: strokeStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
@@ -209,7 +233,7 @@ struct StrokeEngineView: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustDepth(by: -sliderStepAmount)
+                            adjustDepth(by: -depthStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -224,7 +248,7 @@ struct StrokeEngineView: View {
                         }
 
                         Button {
-                            adjustDepth(by: sliderStepAmount)
+                            adjustDepth(by: depthStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
@@ -247,7 +271,7 @@ struct StrokeEngineView: View {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustSensation(by: -sliderStepAmount)
+                            adjustSensation(by: -sensationStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
@@ -262,7 +286,7 @@ struct StrokeEngineView: View {
                         }
 
                         Button {
-                            adjustSensation(by: sliderStepAmount)
+                            adjustSensation(by: sensationStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
@@ -311,6 +335,11 @@ struct StrokeEngineView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Settings", systemImage: "slider.horizontal.3"){
+                    showSettings = true
+                }
+            }
             ToolbarItemGroup(placement: .bottomBar) {
                 Button {
                     bleManager.emergencyStop()
@@ -337,6 +366,20 @@ struct StrokeEngineView: View {
                 }
 
             }
+        }
+        .sheet(isPresented: $showSettings) {
+            StrokeEngineSettingsView(
+                showPresetsSection: $showPresetsSection,
+                highSpeedWarningEnabled: $highSpeedWarningEnabled,
+                highSpeedWarningThreshold: clampedSettingsBinding(for: $highSpeedWarningThresholdSetting),
+                speedStepAmount: clampedSettingsBinding(for: $speedStepAmountSetting),
+                strokeStepAmount: clampedSettingsBinding(for: $strokeStepAmountSetting),
+                depthStepAmount: clampedSettingsBinding(for: $depthStepAmountSetting),
+                sensationStepAmount: clampedSettingsBinding(for: $sensationStepAmountSetting),
+                sliderDebugLogging: $sliderDebugLogging,
+                settingsRange: settingsRange
+            )
+            .presentationDetents([.large])
         }
         .sheet(isPresented: $showPresetEditor) {
             StrokePresetManagerView(selectedPresetID: $selectedPresetID)
@@ -368,7 +411,7 @@ struct StrokeEngineView: View {
             }
         } message: {
             if let pendingPresetActivation {
-                Text("\"\(pendingPresetActivation.name)\" is set to \(pendingPresetActivation.speed)% speed. Select how you want to continue.")
+                Text("\"\(pendingPresetActivation.name)\" is set to \(pendingPresetActivation.speed)% speed. Thats pretty fast :3 are you sure?")
             } else {
                 Text("The selected preset exceeds \(highSpeedPresetThreshold)% speed. Thats pretty fast :3 are you sure?")
             }
@@ -383,6 +426,7 @@ struct StrokeEngineView: View {
         .disabled(bleManager.currentPage != .strokeEngine)
         .navigationTitle("Stroke Engine")
         .onAppear {
+            sanitizeStoredSettings()
             syncState()
             ensureSelectedPresetStillExists()
         }
@@ -545,7 +589,7 @@ struct StrokeEngineView: View {
         guard let newValue else { return }
         guard let preset = presets.first(where: { $0.id == newValue }) else { return }
 
-        if preset.speed > highSpeedPresetThreshold {
+        if highSpeedWarningEnabled && preset.speed > highSpeedPresetThreshold {
             pendingPresetActivationID = preset.id
             suppressPresetSelectionApply = true
             selectedPresetID = oldValue
@@ -666,6 +710,29 @@ struct StrokeEngineView: View {
         max(sliderRange.lowerBound, min(sliderRange.upperBound, value))
     }
 
+    private func clampSettingsValue(_ value: Int) -> Int {
+        max(settingsRange.lowerBound, min(settingsRange.upperBound, value))
+    }
+
+    private func clampedSettingsBinding(for binding: Binding<Int>) -> Binding<Int> {
+        Binding(
+            get: {
+                clampSettingsValue(binding.wrappedValue)
+            },
+            set: { newValue in
+                binding.wrappedValue = clampSettingsValue(newValue)
+            }
+        )
+    }
+
+    private func sanitizeStoredSettings() {
+        highSpeedWarningThresholdSetting = clampSettingsValue(highSpeedWarningThresholdSetting)
+        speedStepAmountSetting = clampSettingsValue(speedStepAmountSetting)
+        strokeStepAmountSetting = clampSettingsValue(strokeStepAmountSetting)
+        depthStepAmountSetting = clampSettingsValue(depthStepAmountSetting)
+        sensationStepAmountSetting = clampSettingsValue(sensationStepAmountSetting)
+    }
+
     private func clearPendingSpeedTarget() {
         pendingSpeedTarget = nil
         pendingSpeedTargetSetAt = .distantPast
@@ -699,6 +766,99 @@ struct StrokeEngineView: View {
         case sliderRelease = "slider"
         case buttonTap = "button"
         case presetLoad = "preset"
+    }
+}
+
+private struct StrokeEngineSettingsView: View {
+    @Binding var showPresetsSection: Bool
+    @Binding var highSpeedWarningEnabled: Bool
+    @Binding var highSpeedWarningThreshold: Int
+    @Binding var speedStepAmount: Int
+    @Binding var strokeStepAmount: Int
+    @Binding var depthStepAmount: Int
+    @Binding var sensationStepAmount: Int
+    @Binding var sliderDebugLogging: Bool
+    let settingsRange: ClosedRange<Int>
+
+    @State private var showSafeguardInfoPopover: Bool = false
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Presets") {
+                    Toggle("Show Presets Section", isOn: $showPresetsSection)
+                }
+
+                if showPresetsSection {
+                    Section{
+                        Toggle("Enable High Speed Warning", isOn: $highSpeedWarningEnabled)
+                        if highSpeedWarningEnabled {
+                            Stepper(value: $highSpeedWarningThreshold, in: settingsRange) {
+                                HStack {
+                                    Text("Warning Threshold")
+                                    Spacer()
+                                    Text("\(highSpeedWarningThreshold)%")
+                                        .foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    } header: {
+                        HStack {
+                            Text("Preset Switching Safeguards")
+                            Button("Info", systemImage: "info.circle") {showSafeguardInfoPopover.toggle()}
+                                .popover(isPresented: $showSafeguardInfoPopover) {
+                                    Text("""
+                                        When switching to a profile with a
+                                        speed value that exceeds the warning
+                                        threshold, confirmation is required
+                                        """)
+                                    .font(.caption2)
+                                    .minimumScaleFactor(0.5)
+                                    .padding(.horizontal, 8)
+                                    .presentationCompactAdaptation(.popover)
+                                }
+                                .labelStyle(.iconOnly)
+                        }
+                    }
+                    .animation(.spring, value: highSpeedWarningEnabled)
+                }
+
+                Section("Button Step Ammount") {
+                    stepperRow(title: "Speed", value: $speedStepAmount)
+                    stepperRow(title: "Stroke", value: $strokeStepAmount)
+                    stepperRow(title: "Depth", value: $depthStepAmount)
+                    stepperRow(title: "Sensation", value: $sensationStepAmount)
+                }
+
+                Section("Diagnostics") {
+                    Toggle("Enable Slider Debug Logging", isOn: $sliderDebugLogging)
+                }
+            }
+            .animation(.spring, value: showPresetsSection)
+            .navigationTitle("Stroke Engine Settings")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepperRow(title: String, value: Binding<Int>) -> some View {
+        Stepper(value: value, in: settingsRange) {
+            HStack {
+                Text(title)
+                Spacer()
+                Text("\(value.wrappedValue)")
+                    .foregroundColor(.secondary)
+            }
+        }
     }
 }
 
