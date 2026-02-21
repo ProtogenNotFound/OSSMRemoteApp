@@ -1,15 +1,13 @@
 //
-//  SimplePenetrationView.swift
+//  SimplePenetrationView+visionOS.swift
 //  OSSM Control
 //
 
 import SwiftUI
 
-struct SimplePenetrationView: PlatformSplitView {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-
-    #if !os(visionOS)
-    var iosBody: some View {
+#if os(visionOS)
+extension SimplePenetrationView {
+    var visionBody: some View {
         Group{
             if bleManager.currentPage == .simplePenetration {
                 Text("Simple Penetration")
@@ -21,5 +19,5 @@ struct SimplePenetrationView: PlatformSplitView {
             }
         }.navigationTitle("Simple Penetration")
     }
-    #endif
 }
+#endif

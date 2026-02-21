@@ -1,16 +1,13 @@
 //
-//  HomingSheetView.swift
+//  HomingSheetView+visionOS.swift
 //  OSSM Control
 //
 
 import SwiftUI
 
-struct HomingProgressBar: PlatformSplitView {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-    let duration: TimeInterval
-
-    #if !os(visionOS)
-    var iosBody: some View {
+#if os(visionOS)
+extension HomingProgressBar {
+    var visionBody: some View {
         TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
             let progress: CGFloat = {
                 guard duration > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
@@ -32,22 +29,10 @@ struct HomingProgressBar: PlatformSplitView {
             .frame(height: 10)
         }
     }
-    #endif
 }
 
-struct HomingSheetView: PlatformSplitView {
-    @EnvironmentObject var bleManager: OSSMBLEManager
-
-    @AppStorage("homingForwardTime") var homingForwardTime: Double?
-    @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
-
-    let forward: Bool
-    @Binding var homingPulse: Bool
-    let onAppear: () -> Void
-    let onDisappear: () -> Void
-
-    #if !os(visionOS)
-    var iosBody: some View {
+extension HomingSheetView {
+    var visionBody: some View {
         let homingString = forward ? "Homing Forward" : "Homing Backward"
         let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
 
@@ -62,11 +47,9 @@ struct HomingSheetView: PlatformSplitView {
                 }()
 
                 ZStack(alignment: .leading) {
-                    // Base text (unfilled) in light gray
                     Text(homingString)
                         .foregroundStyle(.secondary)
 
-                    // Filled portion in white, clipped by progress width
                     Text(homingString)
                         .contentTransition(.numericText())
                         .foregroundStyle(.white)
@@ -95,5 +78,5 @@ struct HomingSheetView: PlatformSplitView {
         .onAppear { onAppear() }
         .onDisappear { onDisappear() }
     }
-    #endif
 }
+#endif

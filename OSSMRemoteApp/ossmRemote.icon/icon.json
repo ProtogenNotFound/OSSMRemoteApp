@@ -95,7 +95,7 @@
           "position" : {
             "scale" : 0.47,
             "translation-in-points" : [
-              19.328964789999986,
+              19.3,
               -1.7017281447131722
             ]
           }
@@ -126,7 +126,7 @@
           "fill-specializations" : [
             {
               "value" : {
-                "automatic-gradient" : "extended-gray:0.25000,1.00000"
+                "automatic-gradient" : "display-p3:0.25119,0.25119,0.25119,1.00000"
               }
             },
             {
