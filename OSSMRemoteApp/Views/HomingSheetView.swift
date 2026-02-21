@@ -5,11 +5,12 @@
 
 import SwiftUI
 
-private struct HomingProgressBar: View {
+struct HomingProgressBar: PlatformSplitView {
     @EnvironmentObject var bleManager: OSSMBLEManager
     let duration: TimeInterval
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
             let progress: CGFloat = {
                 guard duration > 0, let end = bleManager.homingEstimatedEndTime else { return 0 }
@@ -31,24 +32,26 @@ private struct HomingProgressBar: View {
             .frame(height: 10)
         }
     }
+    #endif
 }
 
-struct HomingSheetView: View {
+struct HomingSheetView: PlatformSplitView {
     @EnvironmentObject var bleManager: OSSMBLEManager
 
-    @AppStorage("homingForwardTime") private var homingForwardTime: Double?
-    @AppStorage("homingBackwardTime") private var homingBackwardTime: Double?
+    @AppStorage("homingForwardTime") var homingForwardTime: Double?
+    @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
 
     let forward: Bool
     @Binding var homingPulse: Bool
     let onAppear: () -> Void
     let onDisappear: () -> Void
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         let homingString = forward ? "Homing Forward" : "Homing Backward"
         let homingImage = forward ? "arrow.forward.to.line" : "arrow.backward.to.line"
 
-        VStack(spacing: 16) {
+        return VStack(spacing: 16) {
             let homingSeconds = forward ? homingForwardTime ?? 0 : homingBackwardTime ?? 0
             TimelineView(.periodic(from: .now, by: 1.0/30.0)) { _ in
                 let progress: CGFloat = {
@@ -92,4 +95,5 @@ struct HomingSheetView: View {
         .onAppear { onAppear() }
         .onDisappear { onDisappear() }
     }
+    #endif
 }

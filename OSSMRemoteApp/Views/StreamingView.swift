@@ -5,7 +5,7 @@
 
 import SwiftUI
 
-private struct ControlPoint: Identifiable, Equatable {
+struct ControlPoint: Identifiable, Equatable {
     let id: UUID
     var x: CGFloat
     var y: CGFloat
@@ -17,34 +17,35 @@ private struct ControlPoint: Identifiable, Equatable {
     }
 }
 
-struct StreamingView: View {
-    @EnvironmentObject private var bleManager: OSSMBLEManager
-    @State private var points: [ControlPoint] = [
+struct StreamingView: PlatformSplitView {
+    @EnvironmentObject var bleManager: OSSMBLEManager
+    @State var points: [ControlPoint] = [
         ControlPoint(x: 0.0, y: 0.5),
         ControlPoint(x: 1.0, y: 0.5)
     ]
-    @State private var activeDragID: UUID?
-    @State private var pendingRemovalID: UUID?
+    @State var activeDragID: UUID?
+    @State var pendingRemovalID: UUID?
 
-    @State private var playing: Bool = false
-    @State private var playTask: Task<Void, Never>?
+    @State var playing: Bool = false
+    @State var playTask: Task<Void, Never>?
 
-    @State private var playbuttonHeight: CGFloat = 0
-    @State private var scrollCapsuleWidth: CGFloat = 0
+    @State var playbuttonHeight: CGFloat = 0
+    @State var scrollCapsuleWidth: CGFloat = 0
 
-    @State private var scrollValue: Double? = 0.5
-    @State private var time: Double = 0.5
+    @State var scrollValue: Double? = 0.5
+    @State var time: Double = 0.5
 
-    private let pointRadius: CGFloat = 10
-    private let canvasInset: CGFloat = 12
-    private let minGap: CGFloat = 0.02
-    private let removalGap: CGFloat = 0.03
+    let pointRadius: CGFloat = 10
+    let canvasInset: CGFloat = 12
+    let minGap: CGFloat = 0.02
+    let removalGap: CGFloat = 0.03
 
-    @State private var depth = 0.0
-    @State private var stroke = 0.0
+    @State var depth = 0.0
+    @State var stroke = 0.0
 
 
-    var body: some View {
+    #if !os(visionOS)
+    var iosBody: some View {
         VStack {
             GeometryReader { geometry in
                 ZStack {
@@ -211,9 +212,10 @@ struct StreamingView: View {
                 playing = false
             }
     }
+    #endif
 
 
-    private func pointToView(_ point: ControlPoint, in size: CGSize) -> CGPoint {
+    func pointToView(_ point: ControlPoint, in size: CGSize) -> CGPoint {
         let rect = canvasRect(in: size)
         return CGPoint(
             x: rect.minX + point.x * rect.width,
@@ -221,7 +223,7 @@ struct StreamingView: View {
         )
     }
 
-    private func viewToPoint(_ location: CGPoint, in size: CGSize) -> ControlPoint {
+    func viewToPoint(_ location: CGPoint, in size: CGSize) -> ControlPoint {
         let rect = canvasRect(in: size)
         let clampedX = max(rect.minX, min(rect.maxX, location.x))
         let clampedY = max(rect.minY, min(rect.maxY, location.y))
@@ -230,7 +232,7 @@ struct StreamingView: View {
         return ControlPoint(x: x, y: y)
     }
 
-    private func canvasRect(in size: CGSize) -> CGRect {
+    func canvasRect(in size: CGSize) -> CGRect {
         CGRect(
             x: canvasInset,
             y: canvasInset,
@@ -239,7 +241,7 @@ struct StreamingView: View {
         )
     }
 
-    private func addPoint(at location: CGPoint, in size: CGSize) -> UUID? {
+    func addPoint(at location: CGPoint, in size: CGSize) -> UUID? {
         let newPoint = viewToPoint(location, in: size)
         let existingIndex = points.firstIndex {
             let dx = $0.x - newPoint.x
@@ -264,7 +266,7 @@ struct StreamingView: View {
         return newPoint.id
     }
 
-    private func updatePoint(_ point: ControlPoint, to location: CGPoint, in size: CGSize) {
+    func updatePoint(_ point: ControlPoint, to location: CGPoint, in size: CGSize) {
         guard let index = points.firstIndex(of: point) else { return }
         var updated = points
         var candidate = viewToPoint(location, in: size)
@@ -305,7 +307,7 @@ struct StreamingView: View {
         }
     }
 
-    private func finalizePoint(_ point: ControlPoint, to location: CGPoint, in size: CGSize) {
+    func finalizePoint(_ point: ControlPoint, to location: CGPoint, in size: CGSize) {
         updatePoint(point, to: location, in: size)
         guard let index = points.firstIndex(where: { $0.id == point.id }) else { return }
         guard index != 0 && index != points.count - 1 else { return }
@@ -317,7 +319,7 @@ struct StreamingView: View {
         }
     }
 
-    private func startStreamingLoop() {
+    func startStreamingLoop() {
         playTask?.cancel()
         playTask = Task {
             while !Task.isCancelled {
@@ -354,12 +356,12 @@ struct StreamingView: View {
         }
     }
 
-    private func stopStreamingLoop() {
+    func stopStreamingLoop() {
         playTask?.cancel()
         playTask = nil
     }
 
-    private func scaledPosition(normalized: Double, stroke: Double, depth: Double) -> Int {
+    func scaledPosition(normalized: Double, stroke: Double, depth: Double) -> Int {
         let clampedNormalized = max(0.0, min(1.0, normalized))
         let maxValue = max(0.0, min(100.0, depth))
         let minValue = max(0.0, maxValue - max(0.0, stroke))
