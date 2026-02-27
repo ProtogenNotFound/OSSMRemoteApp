@@ -1,4 +1,5 @@
 # An app to control your OSSM
+# Currently named SMMR (Sex Machine Mobile Remote), pronounced Summer, might rename it again though
 
 <img width="256" height="256" alt="ossmRemote-iOS-Dark-1024x1024@1x" src="https://github.com/user-attachments/assets/6f125022-f2bb-44c9-98bb-0669cfae9547" />
 
@@ -14,6 +15,9 @@
 - Basic streaming functionality
 - Might currently look a bit ugly but should also run on iPad/Vision Pro
 ### How do I install it?
+- Download the ipa from the newest release using a sideloading method of your choice
+
+### What if i don't wanna/can't sideload it?
 **sry, you need a Mac for this one :(**
 
 - clone the repo
