@@ -8,6 +8,10 @@ import CoreBluetooth
 
 #if os(visionOS)
 extension OSSMControlView {
+    var visionOSStatusMenu: some View {
+        statusMenu
+            .glassBackgroundEffect()
+    }
     var visionBody: some View {
         NavigationStack (path: $path){
             Group {
@@ -35,31 +39,29 @@ extension OSSMControlView {
                 switch page {
                 case .menu:
                     MenuView()
-                        .toolbar {
-                            toolbarMenu
-                        }
                 case .simplePenetration:
                     SimplePenetrationView()
-                        .toolbar {
-                            toolbarMenu
-                        }
+                        .ornament(attachmentAnchor: .scene(.topTrailing)) {
+                            visionOSStatusMenu
+                    }
                 case .strokeEngine:
                     StrokeEngineView()
-                        .toolbar {
-                            toolbarMenu
+                        .ornament(attachmentAnchor: .scene(.topTrailing)) {
+                            visionOSStatusMenu
                         }
                 case .streaming:
                     StreamingView()
-                    .toolbar {
-                        toolbarMenu
-                    }
+                        .ornament(attachmentAnchor: .scene(.topTrailing)) {
+                            visionOSStatusMenu
+                        }
                 }
             }
-            .toolbar {
-                toolbarMenu
+            .ornament(attachmentAnchor: .scene(.topTrailing)) {
+                visionOSStatusMenu
             }
             .navigationTitle("OSSM Control")
         }
+        .frame(minWidth: 510, minHeight: 680)
         .onChange(of: path, { _, newPath in
             let target = newPath.last ?? .menu
             bleManager.navigateTo(target)

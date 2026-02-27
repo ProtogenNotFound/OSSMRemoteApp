@@ -11,9 +11,9 @@ import CoreBluetooth
 struct OSSMControlView: PlatformSplitView {
     @AppStorage("homingForwardTime") var homingForwardTime: Double?
     @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
+    @AppStorage("savedUUID") var savedUUID: String?
     @EnvironmentObject var bleManager: OSSMBLEManager
     @State var path: [OSSMPage] = []
-    @AppStorage("savedUUID") var savedUUID: String?
     @State var showError: Bool = false
     @State var errorMessage: String = ""
 
@@ -34,33 +34,36 @@ struct OSSMControlView: PlatformSplitView {
     @ToolbarContentBuilder
     var toolbarMenu: some ToolbarContent {
         ToolbarItem(placement: .topBarTrailing) {
-            Menu {
-                Section("Connection Status"){
-                    connectionStatusView
-                }
-                // Status Section
-                Section("Device Status") {
-                    Text(bleManager.currentRootState.rawValue)
-                }
-                Button("Disconnect", role: .destructive) {
-                    bleManager.disconnect()
-                    resetAppStorage()
-                    // Start scanning for new devices
-                    bleManager.startScanning()
-                }.disabled(bleManager.connectionStatus != .connected)
-                Button("Debug Mode") {
-                    if bleManager.isDebugMode {
-                        bleManager.disableDebugMode()
-                    } else {
-                        bleManager.enableDebugMode()
-                    }
-                }
-            } label: {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 8, height: 8)
-            }
+            statusMenu
+        }
+    }
 
+    var statusMenu: some View {
+        Menu {
+            Section("Connection Status"){
+                connectionStatusView
+            }
+            // Status Section
+            Section("Device Status") {
+                Text(bleManager.currentRootState.rawValue)
+            }
+            Button("Disconnect", role: .destructive) {
+                bleManager.disconnect()
+                resetAppStorage()
+                // Start scanning for new devices
+                bleManager.startScanning()
+            }.disabled(bleManager.connectionStatus != .connected)
+            Button("Debug Mode") {
+                if bleManager.isDebugMode {
+                    bleManager.disableDebugMode()
+                } else {
+                    bleManager.enableDebugMode()
+                }
+            }
+        } label: {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 8, height: 8)
         }
     }
 
