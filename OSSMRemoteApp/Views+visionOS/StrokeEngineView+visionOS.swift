@@ -9,7 +9,7 @@ import SwiftData
 #if os(visionOS)
 extension StrokeEngineView {
     var visionBody: some View {
-        List {
+        VStack {
             if showPresetsSection {
                 Section("Presets") {
                     HStack {
@@ -19,7 +19,7 @@ extension StrokeEngineView {
                                 Text(preset.name).tag(Optional(preset.id))
                             }
                         }
-                        .padding(.trailing)
+                        Spacer()
                         Button("Edit", systemImage: "pencil") {
                             showPresetEditor.toggle()
                         }
@@ -29,7 +29,7 @@ extension StrokeEngineView {
                         }
                     }
                     .labelStyle(.iconOnly)
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
 
                     if let selectedPreset {
                         Text(selectedPreset.summaryText)
@@ -41,17 +41,16 @@ extension StrokeEngineView {
                             .foregroundColor(.secondary)
                     }
                 }
+                Divider()
             }
             // Speed Control
             Section {
                 VStack(alignment: .leading) {
                     HStack {
-                        Button {
+                        Button("Minus", systemImage: "minus") {
                             adjustSpeed(by: -speedStepAmount)
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(speed)) <= sliderRange.lowerBound)
 
                         Slider(value: $speed, in: 0...100, step: 1) { editing in
@@ -61,12 +60,10 @@ extension StrokeEngineView {
                             }
                         }
 
-                        Button {
+                        Button("Plus", systemImage: "plus") {
                             adjustSpeed(by: speedStepAmount)
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(speed)) >= sliderRange.upperBound)
                     }.labelStyle(.iconOnly)
                 }
@@ -84,12 +81,10 @@ extension StrokeEngineView {
             Section {
                 VStack(alignment: .leading) {
                     HStack {
-                        Button {
+                        Button("Minus", systemImage: "minus") {
                             adjustStroke(by: -strokeStepAmount)
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(stroke)) <= sliderRange.lowerBound)
 
                         Slider(value: $stroke, in: 0...100, step: 1) { editing in
@@ -99,12 +94,10 @@ extension StrokeEngineView {
                             }
                         }
 
-                        Button {
+                        Button("Plus", systemImage: "plus") {
                             adjustStroke(by: strokeStepAmount)
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(stroke)) >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
@@ -122,12 +115,10 @@ extension StrokeEngineView {
             Section {
                 VStack(alignment: .leading) {
                     HStack {
-                        Button {
+                        Button("Minus", systemImage: "minus") {
                             adjustDepth(by: -depthStepAmount)
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(depth)) <= sliderRange.lowerBound)
 
                         Slider(value: $depth, in: 0...100, step: 1) { editing in
@@ -137,12 +128,10 @@ extension StrokeEngineView {
                             }
                         }
 
-                        Button {
+                        Button("Plus", systemImage: "plus") {
                             adjustDepth(by: depthStepAmount)
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(depth)) >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
@@ -160,12 +149,10 @@ extension StrokeEngineView {
             Section {
                 VStack(alignment: .leading) {
                     HStack {
-                        Button {
+                        Button("Minus", systemImage: "minus") {
                             adjustSensation(by: -sensationStepAmount)
-                        } label: {
-                            Image(systemName: "minus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(sensation)) <= sliderRange.lowerBound)
 
                         Slider(value: $sensation, in: 0...100, step: 1) { editing in
@@ -175,12 +162,10 @@ extension StrokeEngineView {
                             }
                         }
 
-                        Button {
+                        Button("Plus", systemImage: "plus") {
                             adjustSensation(by: sensationStepAmount)
-                        } label: {
-                            Image(systemName: "plus.circle.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.bordered)
                         .disabled(clampSliderValue(Int(sensation)) >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
@@ -188,9 +173,10 @@ extension StrokeEngineView {
             } header: {
                 HStack {
                     Text("Sensation")
-                    Button("info", systemImage: "info.circle") {
+                    Button("info", systemImage: "info.circle.fill") {
                         showSensationInfo.toggle()
                     }
+                    .buttonStyle(.borderless)
                     .labelStyle(.iconOnly)
                     .popover(isPresented: $showSensationInfo) {
                         Text(selectedPatternInfo?.sensationDescription ?? LocalizedStringKey("Error"))
@@ -224,13 +210,9 @@ extension StrokeEngineView {
                 }
             }
         }
+        .padding([.horizontal, .bottom])
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Settings", systemImage: "slider.horizontal.3"){
-                    showSettings = true
-                }
-            }
-            ToolbarItemGroup(placement: .bottomBar) {
+            ToolbarItemGroup(placement: .bottomOrnament) {
                 Button {
                     bleManager.emergencyStop()
                     speed = 0
@@ -255,6 +237,11 @@ extension StrokeEngineView {
                     }
                 }
 
+            }
+            ToolbarItem(placement: .topBarTrailing){
+                Button("Settings", systemImage: "slider.horizontal.3"){
+                    showSettings = true
+                }
             }
         }
         .sheet(isPresented: $showSettings) {
