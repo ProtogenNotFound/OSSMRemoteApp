@@ -7,7 +7,6 @@ import SwiftUI
 import SwiftData
 
 struct StrokeEngineView: PlatformSplitView {
-
     @Environment(\.modelContext) var modelContext
     @Query(sort: [SortDescriptor(\StrokeEnginePreset.sortOrder), SortDescriptor(\StrokeEnginePreset.name)]) var presets: [StrokeEnginePreset]
 
