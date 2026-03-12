@@ -57,16 +57,23 @@ class OSSMBLEManager: NSObject, ObservableObject {
     // Characteristics
     private var commandCharacteristic: CBCharacteristic?
     private var speedKnobConfigCharacteristic: CBCharacteristic?
+    private var wifiCharacteristic: CBCharacteristic?
     private var currentStateCharacteristic: CBCharacteristic?
     private var patternListCharacteristic: CBCharacteristic?
     private var patternDescriptionCharacteristic: CBCharacteristic?
+    private var gpioCharacteristic: CBCharacteristic?
 
     // Command response handling
-    private struct PendingCommandWrite {
+    private enum PendingCommandDelivery {
+        case completion(((Result<Void, Error>) -> Void)?)
+        case rawResponse(CheckedContinuation<String, Error>)
+    }
+
+    private struct PendingCommand {
         let eventID: UUID
-        let completion: ((Result<Void, Error>) -> Void)?
-        let expectsResponse: Bool
-        let isAwaited: Bool
+        let command: String
+        let delivery: PendingCommandDelivery
+        let timeout: TimeInterval
     }
 
     private enum CommandTransportResult: CustomStringConvertible {
@@ -108,19 +115,15 @@ class OSSMBLEManager: NSObject, ObservableObject {
     private var pendingReadCompletion: ((Result<Data, Error>) -> Void)?
     private var pendingReadTimeoutTask: Task<Void, Never>?
 
-    // Success-first command pipeline
-    private var pendingCommandWrites: [PendingCommandWrite] = []
-    private var pendingCommandResponseIDs: [UUID] = []
+    // Serialized command pipeline
+    private var pendingCommands: [PendingCommand] = []
+    private var activeCommand: PendingCommand?
     private var commandEvents: [UUID: CommandEvent] = [:]
-    private var commandResponseTimeoutTasks: [UUID: Task<Void, Never>] = [:]
-    private let commandResponseTimeout: TimeInterval = 2.0
-
-    // Explicit awaited command pipeline
-    private var pendingAwaitedCommandID: UUID?
-    private var pendingAwaitedCommandResponseContinuation: CheckedContinuation<String, Error>?
-    private var pendingAwaitedCommandResponseTimeoutTask: Task<Void, Never>?
+    private var activeCommandTimeoutTask: Task<Void, Never>?
+    private let defaultCommandResponseTimeout: TimeInterval = 2.0
 
     private var patternFetchTask: Task<Void, Never>?
+    private var initialSetupTask: Task<Void, Never>?
 
     // Homing timing tracking
     private var homingForwardStartTime: Date?
@@ -370,14 +373,45 @@ class OSSMBLEManager: NSObject, ObservableObject {
         return UserDefaults.standard.bool(forKey: speedKnobPreferenceKey)
     }
 
+    func readWiFiValue() async throws -> Data {
+        guard let wifiCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        return try await readValue(for: wifiCharacteristic)
+    }
+
+    func writeWiFiValue(_ data: Data) throws {
+        guard let peripheral = ossmPeripheral else {
+            throw OSSMError.notReady
+        }
+        guard let wifiCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        peripheral.writeValue(data, for: wifiCharacteristic, type: .withResponse)
+    }
+
+    func readGPIOValue() async throws -> Data {
+        guard let gpioCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        return try await readValue(for: gpioCharacteristic)
+    }
+
+    func writeGPIOValue(_ data: Data) throws {
+        guard let peripheral = ossmPeripheral else {
+            throw OSSMError.notReady
+        }
+        guard let gpioCharacteristic else {
+            throw OSSMError.characteristicNotFound
+        }
+        peripheral.writeValue(data, for: gpioCharacteristic, type: .withResponse)
+    }
+
     // MARK: - Private Command Methods
 
     /// Send a command and don't wait for response (fire and forget)
     private func sendCommandFireAndForget(_ command: String) {
-        let success = queueCommandWrite(command, completion: nil, expectsResponse: true, isAwaited: false)
-        if !success {
-            print("[OSSM][Command] Dropped fire-and-forget command because command characteristic is unavailable: \(command)")
-        }
+        enqueueCommand(command, delivery: .completion(nil), timeout: defaultCommandResponseTimeout)
     }
 
     /// Send a command and await the firmware response string.
@@ -391,65 +425,13 @@ class OSSMBLEManager: NSObject, ObservableObject {
             return "ok"
         }
         guard isReady else { throw OSSMError.notReady }
-        // Keep awaited commands isolated from success-first background commands
-        if pendingAwaitedCommandResponseContinuation != nil {
-            throw OSSMError.unexpectedResponse("Another command is already awaiting a response")
-        }
-        if !pendingCommandWrites.isEmpty || !pendingCommandResponseIDs.isEmpty {
-            throw OSSMError.unexpectedResponse("Cannot await response while background command queue is active")
-        }
         guard commandCharacteristic != nil else { throw OSSMError.characteristicNotFound }
         guard command.data(using: .utf8) != nil else {
             throw OSSMError.invalidParameter("Failed to encode command")
         }
 
-        let eventID = registerCommandEvent(command)
-
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-            self.pendingAwaitedCommandID = eventID
-            self.pendingAwaitedCommandResponseContinuation = continuation
-
-            // Timeout task
-            self.pendingAwaitedCommandResponseTimeoutTask?.cancel()
-            self.pendingAwaitedCommandResponseTimeoutTask = Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
-                } catch {
-                    // Task cancelled
-                    return
-                }
-
-                // If still pending, fail with timeout
-                if let cont = self.pendingAwaitedCommandResponseContinuation {
-                    self.pendingAwaitedCommandResponseContinuation = nil
-                    self.pendingAwaitedCommandResponseTimeoutTask = nil
-                    if let awaitedID = self.pendingAwaitedCommandID {
-                        self.recordCommandResponse(
-                            eventID: awaitedID,
-                            response: nil,
-                            outcome: .timedOut
-                        )
-                        self.pendingAwaitedCommandID = nil
-                    }
-                    cont.resume(throwing: OSSMError.timeout)
-                }
-            }
-
-            let success = self.queueCommandWrite(
-                command,
-                completion: nil,
-                expectsResponse: true,
-                isAwaited: true,
-                eventID: eventID
-            )
-            if !success {
-                self.pendingAwaitedCommandID = nil
-                self.pendingAwaitedCommandResponseContinuation = nil
-                self.pendingAwaitedCommandResponseTimeoutTask?.cancel()
-                self.pendingAwaitedCommandResponseTimeoutTask = nil
-                continuation.resume(throwing: OSSMError.characteristicNotFound)
-            }
+            self.enqueueCommand(command, delivery: .rawResponse(continuation), timeout: timeout)
         }
     }
 
@@ -463,36 +445,46 @@ class OSSMBLEManager: NSObject, ObservableObject {
             completion?(.failure(OSSMError.notReady))
             return
         }
-        let success = queueCommandWrite(command, completion: completion, expectsResponse: true, isAwaited: false)
-        if !success {
+        guard commandCharacteristic != nil else {
             completion?(.failure(OSSMError.characteristicNotFound))
+            return
         }
+        enqueueCommand(command, delivery: .completion(completion), timeout: defaultCommandResponseTimeout)
     }
 
-    @discardableResult
-    private func queueCommandWrite(
+    private func enqueueCommand(
         _ command: String,
-        completion: ((Result<Void, Error>) -> Void)?,
-        expectsResponse: Bool,
-        isAwaited: Bool,
-        eventID: UUID? = nil
-    ) -> Bool {
-        guard let characteristic = commandCharacteristic,
-              let data = command.data(using: .utf8) else {
-            return false
+        delivery: PendingCommandDelivery,
+        timeout: TimeInterval
+    ) {
+        guard commandCharacteristic != nil else {
+            switch delivery {
+            case .completion(let completion):
+                completion?(.failure(OSSMError.characteristicNotFound))
+            case .rawResponse(let continuation):
+                continuation.resume(throwing: OSSMError.characteristicNotFound)
+            }
+            return
+        }
+        guard command.data(using: .utf8) != nil else {
+            switch delivery {
+            case .completion(let completion):
+                completion?(.failure(OSSMError.invalidParameter("Failed to encode command")))
+            case .rawResponse(let continuation):
+                continuation.resume(throwing: OSSMError.invalidParameter("Failed to encode command"))
+            }
+            return
         }
 
-        let id = eventID ?? registerCommandEvent(command)
-        pendingCommandWrites.append(
-            PendingCommandWrite(
-                eventID: id,
-                completion: completion,
-                expectsResponse: expectsResponse,
-                isAwaited: isAwaited
+        pendingCommands.append(
+            PendingCommand(
+                eventID: registerCommandEvent(command),
+                command: command,
+                delivery: delivery,
+                timeout: timeout
             )
         )
-        ossmPeripheral?.writeValue(data, for: characteristic, type: .withResponse)
-        return true
+        processNextQueuedCommandIfPossible()
     }
 
     @discardableResult
@@ -539,55 +531,189 @@ class OSSMBLEManager: NSObject, ObservableObject {
         }
     }
 
-    private func scheduleCommandResponseTimeout(eventID: UUID, timeout: TimeInterval) {
-        commandResponseTimeoutTasks[eventID]?.cancel()
-        commandResponseTimeoutTasks[eventID] = Task { [weak self] in
+    private func processNextQueuedCommandIfPossible() {
+        guard activeCommand == nil else { return }
+        guard let characteristic = commandCharacteristic,
+              let peripheral = ossmPeripheral,
+              !pendingCommands.isEmpty else { return }
+
+        let nextCommand = pendingCommands.removeFirst()
+        guard let data = nextCommand.command.data(using: .utf8) else {
+            failCommand(nextCommand, error: OSSMError.invalidParameter("Failed to encode command"))
+            processNextQueuedCommandIfPossible()
+            return
+        }
+
+        activeCommand = nextCommand
+        peripheral.writeValue(data, for: characteristic, type: .withResponse)
+    }
+
+    private func scheduleActiveCommandTimeout() {
+        activeCommandTimeoutTask?.cancel()
+        guard let activeCommand else { return }
+
+        activeCommandTimeoutTask = Task { [weak self] in
             guard let self else { return }
             do {
-                try await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+                try await Task.sleep(nanoseconds: UInt64(activeCommand.timeout * 1_000_000_000))
             } catch {
                 return
             }
             await MainActor.run {
-                guard self.pendingCommandResponseIDs.contains(eventID) else { return }
-                self.pendingCommandResponseIDs.removeAll { $0 == eventID }
-                self.commandResponseTimeoutTasks[eventID] = nil
-                self.recordCommandResponse(eventID: eventID, response: nil, outcome: .timedOut)
-                self.logCommandWarning(for: eventID, message: "Timed out waiting for command response")
+                guard let pending = self.activeCommand, pending.eventID == activeCommand.eventID else { return }
+                self.activeCommand = nil
+                self.activeCommandTimeoutTask = nil
+                self.recordCommandResponse(eventID: pending.eventID, response: nil, outcome: .timedOut)
+                self.logCommandWarning(for: pending.eventID, message: "Timed out waiting for command response")
+                self.failCommand(pending, error: OSSMError.timeout)
+                self.processNextQueuedCommandIfPossible()
             }
         }
     }
 
-    private func cancelCommandResponseTimeout(eventID: UUID) {
-        commandResponseTimeoutTasks[eventID]?.cancel()
-        commandResponseTimeoutTasks[eventID] = nil
+    private func finishActiveCommand(with response: String) {
+        guard let activeCommand else {
+            let unmatchedEventID = registerCommandEvent("<unmatched-response>")
+            recordTransportResult(eventID: unmatchedEventID, result: .success)
+            recordCommandResponse(eventID: unmatchedEventID, response: response, outcome: .unmatchedResponse)
+            logCommandWarning(for: unmatchedEventID, message: "Unmatched command response with no pending command")
+            return
+        }
+
+        self.activeCommand = nil
+        activeCommandTimeoutTask?.cancel()
+        activeCommandTimeoutTask = nil
+
+        let outcome = parseCommandResponseOutcome(response)
+        recordCommandResponse(eventID: activeCommand.eventID, response: response, outcome: outcome)
+        switch outcome {
+        case .succeeded:
+            logCommandInfo(for: activeCommand.eventID, message: "Command response received")
+            succeedCommand(activeCommand, response: response)
+        case .firmwareFailed:
+            logCommandWarning(for: activeCommand.eventID, message: "Firmware reported command failure")
+            failCommand(activeCommand, error: OSSMError.commandFailed(response))
+        case .malformedResponse:
+            logCommandWarning(for: activeCommand.eventID, message: "Command returned malformed response")
+            switch activeCommand.delivery {
+            case .completion:
+                failCommand(activeCommand, error: OSSMError.invalidResponse)
+            case .rawResponse:
+                succeedCommand(activeCommand, response: response)
+            }
+        default:
+            failCommand(activeCommand, error: OSSMError.invalidResponse)
+        }
+
+        processNextQueuedCommandIfPossible()
+    }
+
+    private func failActiveCommand(error: Error, outcome: CommandOutcome) {
+        guard let activeCommand else { return }
+
+        self.activeCommand = nil
+        activeCommandTimeoutTask?.cancel()
+        activeCommandTimeoutTask = nil
+        recordCommandResponse(eventID: activeCommand.eventID, response: nil, outcome: outcome)
+        logCommandError(for: activeCommand.eventID, message: error.localizedDescription)
+        failCommand(activeCommand, error: error)
+        processNextQueuedCommandIfPossible()
     }
 
     private func flushPendingCommandQueues(error: Error) {
-        // Any commands that were sent but never transport-acked should fail their completion handlers.
-        for write in pendingCommandWrites {
-            write.completion?(.failure(error))
-            recordTransportResult(eventID: write.eventID, result: .failure(error.localizedDescription))
-            logCommandError(for: write.eventID, message: "Transport aborted before ACK: \(error.localizedDescription)")
+        if let activeCommand {
+            activeCommandTimeoutTask?.cancel()
+            activeCommandTimeoutTask = nil
+            self.activeCommand = nil
+            recordCommandResponse(eventID: activeCommand.eventID, response: nil, outcome: .timedOut)
+            logCommandWarning(for: activeCommand.eventID, message: "Command response dropped during reset")
+            failCommand(activeCommand, error: error)
         }
-        pendingCommandWrites.removeAll()
 
-        for eventID in pendingCommandResponseIDs {
-            cancelCommandResponseTimeout(eventID: eventID)
-            recordCommandResponse(eventID: eventID, response: nil, outcome: .timedOut)
-            logCommandWarning(for: eventID, message: "Command response dropped during reset")
+        for pendingCommand in pendingCommands {
+            recordTransportResult(eventID: pendingCommand.eventID, result: .failure(error.localizedDescription))
+            logCommandError(for: pendingCommand.eventID, message: "Queued command aborted before send: \(error.localizedDescription)")
+            failCommand(pendingCommand, error: error)
         }
-        pendingCommandResponseIDs.removeAll()
+        pendingCommands.removeAll()
+    }
 
-        if let continuation = pendingAwaitedCommandResponseContinuation {
-            pendingAwaitedCommandResponseContinuation = nil
-            pendingAwaitedCommandResponseTimeoutTask?.cancel()
-            pendingAwaitedCommandResponseTimeoutTask = nil
-            if let awaitedID = pendingAwaitedCommandID {
-                recordCommandResponse(eventID: awaitedID, response: nil, outcome: .timedOut)
-                pendingAwaitedCommandID = nil
-            }
+    private func succeedCommand(_ command: PendingCommand, response: String) {
+        switch command.delivery {
+        case .completion(let completion):
+            completion?(.success(()))
+        case .rawResponse(let continuation):
+            continuation.resume(returning: response)
+        }
+    }
+
+    private func failCommand(_ command: PendingCommand, error: Error) {
+        switch command.delivery {
+        case .completion(let completion):
+            completion?(.failure(error))
+        case .rawResponse(let continuation):
             continuation.resume(throwing: error)
+        }
+    }
+
+    private func beginInitialDeviceSetup() {
+        initialSetupTask?.cancel()
+        initialSetupTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                if !Task.isCancelled,
+                   self.ossmPeripheral != nil,
+                   self.commandCharacteristic != nil,
+                   self.currentStateCharacteristic != nil {
+                    self.initialSetupTask = nil
+                    self.isReady = true
+                    self.connectionStatus = .ready
+
+                    if self.speedKnobConfigCharacteristic != nil {
+                        self.setSpeedKnobConfig(knobAsLimit: self.loadSpeedKnobPreference())
+                    }
+
+                    self.refreshPatterns()
+                }
+            }
+
+            if let currentStateCharacteristic {
+                do {
+                    let stateData = try await self.readValue(for: currentStateCharacteristic)
+                    self.handleStateUpdateData(stateData)
+                } catch {
+                    print("[OSSM] Failed to read initial state: \(error)")
+                }
+            }
+
+            if let speedKnobConfigCharacteristic {
+                do {
+                    let speedKnobConfigData = try await self.readValue(for: speedKnobConfigCharacteristic)
+                    self.handleSpeedKnobConfigData(speedKnobConfigData)
+                } catch {
+                    print("[OSSM] Failed to read initial speed knob config: \(error)")
+                }
+            }
+        }
+    }
+
+    private func handleStateUpdateData(_ data: Data) {
+        if let state = OSSMState.fromJSON(data) {
+            runtimeData.update(with: state)
+
+            if currentRootState != state.state {
+                handleStateTransition(from: currentRootState, to: state.state)
+                currentRootState = state.state
+            }
+        } else if let jsonString = String(data: data, encoding: .utf8) {
+            print("[OSSM] Failed to parse state JSON: \(jsonString)")
+        }
+    }
+
+    private func handleSpeedKnobConfigData(_ data: Data) {
+        if let value = String(data: data, encoding: .utf8) {
+            speedKnobAsLimit = (value == "true")
+            print("[OSSM] Speed knob config: \(value)")
         }
     }
 
@@ -664,9 +790,11 @@ class OSSMBLEManager: NSObject, ObservableObject {
         ossmPeripheral = nil
         commandCharacteristic = nil
         speedKnobConfigCharacteristic = nil
+        wifiCharacteristic = nil
         currentStateCharacteristic = nil
         patternListCharacteristic = nil
         patternDescriptionCharacteristic = nil
+        gpioCharacteristic = nil
         patterns.removeAll()
         runtimeData.currentState = OSSMState()
         currentRootState = .idle
@@ -674,20 +802,16 @@ class OSSMBLEManager: NSObject, ObservableObject {
         homingForwardStartTime = nil
         homingBackwardStartTime = nil
         flushPendingCommandQueues(error: OSSMError.notReady)
-        for task in commandResponseTimeoutTasks.values {
-            task.cancel()
-        }
-        commandResponseTimeoutTasks.removeAll()
+        activeCommandTimeoutTask?.cancel()
+        activeCommandTimeoutTask = nil
         commandEvents.removeAll()
-        pendingAwaitedCommandResponseTimeoutTask?.cancel()
-        pendingAwaitedCommandResponseTimeoutTask = nil
-        pendingAwaitedCommandID = nil
-        pendingAwaitedCommandResponseContinuation = nil
         pendingReadTimeoutTask?.cancel()
         pendingReadTimeoutTask = nil
         pendingReadCompletion = nil
         patternFetchTask?.cancel()
         patternFetchTask = nil
+        initialSetupTask?.cancel()
+        initialSetupTask = nil
     }
 }
 
@@ -741,6 +865,8 @@ extension OSSMBLEManager: CBCentralManagerDelegate {
         print("[OSSM] Disconnected from device")
         isReady = false
         connectionStatus = .disconnected
+        initialSetupTask?.cancel()
+        initialSetupTask = nil
         flushPendingCommandQueues(error: error ?? OSSMError.notReady)
         resolvePendingRead(.failure(error ?? OSSMError.notReady))
         patternFetchTask?.cancel()
@@ -779,9 +905,11 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                 peripheral.discoverCharacteristics([
                     OSSMConstants.commandCharacteristicUUID,
                     OSSMConstants.speedKnobConfigCharacteristicUUID,
+                    OSSMConstants.wifiCharacteristicUUID,
                     OSSMConstants.currentStateCharacteristicUUID,
                     OSSMConstants.patternListCharacteristicUUID,
-                    OSSMConstants.patternDescriptionCharacteristicUUID
+                    OSSMConstants.patternDescriptionCharacteristicUUID,
+                    OSSMConstants.gpioCharacteristicUUID
                 ], for: service)
             }
         }
@@ -800,14 +928,16 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             case OSSMConstants.commandCharacteristicUUID:
                 print("[OSSM] Found command characteristic")
                 commandCharacteristic = characteristic
-                // Subscribe to command responses (firmware writes response back to this characteristic)
+                // Keep notify enabled as a compatibility fallback while reads remain the primary response path.
                 peripheral.setNotifyValue(true, for: characteristic)
 
             case OSSMConstants.speedKnobConfigCharacteristicUUID:
                 print("[OSSM] Found speed knob config characteristic")
                 speedKnobConfigCharacteristic = characteristic
-                // Read current config
-                peripheral.readValue(for: characteristic)
+
+            case OSSMConstants.wifiCharacteristicUUID:
+                print("[OSSM] Found WiFi characteristic")
+                wifiCharacteristic = characteristic
 
             case OSSMConstants.currentStateCharacteristicUUID:
                 print("[OSSM] Found state characteristic")
@@ -823,6 +953,10 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                 print("[OSSM] Found pattern description characteristic")
                 patternDescriptionCharacteristic = characteristic
 
+            case OSSMConstants.gpioCharacteristicUUID:
+                print("[OSSM] Found GPIO characteristic")
+                gpioCharacteristic = characteristic
+
             default:
                 break
             }
@@ -830,14 +964,8 @@ extension OSSMBLEManager: CBPeripheralDelegate {
 
         // Check if we have all required characteristics
         if commandCharacteristic != nil && currentStateCharacteristic != nil {
-            print("[OSSM] Device is ready")
-            isReady = true
-            connectionStatus = .ready
-
-            // Default remains independent BLE speed control; persisted preference can override this.
-            setSpeedKnobConfig(knobAsLimit: loadSpeedKnobPreference())
-
-            refreshPatterns()
+            print("[OSSM] Required characteristics discovered, beginning initial device setup")
+            beginInitialDeviceSetup()
         }
     }
 
@@ -845,22 +973,7 @@ extension OSSMBLEManager: CBPeripheralDelegate {
         guard error == nil, let data = characteristic.value else {
             print("[OSSM] Error reading characteristic: \(error?.localizedDescription ?? "unknown")")
             if characteristic.uuid == OSSMConstants.commandCharacteristicUUID {
-                if let continuation = pendingAwaitedCommandResponseContinuation {
-                    pendingAwaitedCommandResponseContinuation = nil
-                    pendingAwaitedCommandResponseTimeoutTask?.cancel()
-                    pendingAwaitedCommandResponseTimeoutTask = nil
-                    if let awaitedID = pendingAwaitedCommandID {
-                        recordCommandResponse(eventID: awaitedID, response: nil, outcome: .malformedResponse)
-                        logCommandError(for: awaitedID, message: "Awaited command response error: \(error?.localizedDescription ?? "unknown")")
-                        pendingAwaitedCommandID = nil
-                    }
-                    continuation.resume(throwing: error ?? OSSMError.invalidResponse)
-                } else if let eventID = pendingCommandResponseIDs.first {
-                    pendingCommandResponseIDs.removeFirst()
-                    cancelCommandResponseTimeout(eventID: eventID)
-                    recordCommandResponse(eventID: eventID, response: nil, outcome: .malformedResponse)
-                    logCommandError(for: eventID, message: "Command response error: \(error?.localizedDescription ?? "unknown")")
-                }
+                failActiveCommand(error: error ?? OSSMError.invalidResponse, outcome: .malformedResponse)
             } else {
                 resolvePendingRead(.failure(error ?? OSSMError.invalidResponse))
             }
@@ -869,79 +982,19 @@ extension OSSMBLEManager: CBPeripheralDelegate {
 
         switch characteristic.uuid {
         case OSSMConstants.currentStateCharacteristicUUID:
-            // Parse state JSON from firmware
-            if let state = OSSMState.fromJSON(data) {
-                DispatchQueue.main.async {
-                    // 1. Update the high-frequency data container
-                    self.runtimeData.update(with: state)
-
-                    // 2. Only update the main published property if the high-level state changed
-                    // This prevents the root view from re-rendering on every speed change
-                    if self.currentRootState != state.state {
-                        self.handleStateTransition(from: self.currentRootState, to: state.state)
-                        self.currentRootState = state.state
-                    }
-                }
-            } else if let jsonString = String(data: data, encoding: .utf8) {
-                print("[OSSM] Failed to parse state JSON: \(jsonString)")
-            }
+            handleStateUpdateData(data)
 
         case OSSMConstants.speedKnobConfigCharacteristicUUID:
-            if let value = String(data: data, encoding: .utf8) {
-                DispatchQueue.main.async {
-                    self.speedKnobAsLimit = (value == "true")
-                }
-                print("[OSSM] Speed knob config: \(value)")
-            }
+            handleSpeedKnobConfigData(data)
 
         case OSSMConstants.commandCharacteristicUUID:
             if let response = String(data: data, encoding: .utf8) {
                 print("[OSSM] Command response: \(response)")
-                let outcome = parseCommandResponseOutcome(response)
-
-                // Awaited command path stays isolated from background success-first pipeline.
-                if let continuation = pendingAwaitedCommandResponseContinuation {
-                    pendingAwaitedCommandResponseContinuation = nil
-                    pendingAwaitedCommandResponseTimeoutTask?.cancel()
-                    pendingAwaitedCommandResponseTimeoutTask = nil
-                    if let awaitedID = pendingAwaitedCommandID {
-                        recordCommandResponse(eventID: awaitedID, response: response, outcome: outcome)
-                        if outcome == .firmwareFailed {
-                            logCommandWarning(for: awaitedID, message: "Awaited command returned firmware failure")
-                        } else if outcome == .malformedResponse {
-                            logCommandWarning(for: awaitedID, message: "Awaited command returned malformed response")
-                        } else {
-                            logCommandInfo(for: awaitedID, message: "Awaited command response received")
-                        }
-                        pendingAwaitedCommandID = nil
-                    }
-                    continuation.resume(returning: response)
-                    break
-                }
-
-                // Success-first command path: transport completion already returned to callers.
-                if let eventID = pendingCommandResponseIDs.first {
-                    pendingCommandResponseIDs.removeFirst()
-                    cancelCommandResponseTimeout(eventID: eventID)
-                    recordCommandResponse(eventID: eventID, response: response, outcome: outcome)
-                    if outcome == .firmwareFailed {
-                        logCommandWarning(for: eventID, message: "Firmware reported command failure")
-                    } else if outcome == .malformedResponse {
-                        logCommandWarning(for: eventID, message: "Command returned malformed response")
-                    } else {
-                        logCommandInfo(for: eventID, message: "Command response received")
-                    }
-                } else {
-                    let unmatchedEventID = registerCommandEvent("<unmatched-response>")
-                    recordTransportResult(eventID: unmatchedEventID, result: .success)
-                    recordCommandResponse(eventID: unmatchedEventID, response: response, outcome: .unmatchedResponse)
-                    logCommandWarning(for: unmatchedEventID, message: "Unmatched command response with no pending command")
-                }
-            } else if let eventID = pendingCommandResponseIDs.first {
-                pendingCommandResponseIDs.removeFirst()
-                cancelCommandResponseTimeout(eventID: eventID)
-                recordCommandResponse(eventID: eventID, response: nil, outcome: .malformedResponse)
-                logCommandWarning(for: eventID, message: "Failed to decode command response as UTF-8")
+                finishActiveCommand(with: response)
+            } else if let activeCommand {
+                recordCommandResponse(eventID: activeCommand.eventID, response: nil, outcome: .malformedResponse)
+                logCommandWarning(for: activeCommand.eventID, message: "Failed to decode command response as UTF-8")
+                failActiveCommand(error: OSSMError.invalidResponse, outcome: .malformedResponse)
             }
 
         case OSSMConstants.patternListCharacteristicUUID:
@@ -962,49 +1015,21 @@ extension OSSMBLEManager: CBPeripheralDelegate {
             }
             return
         }
-
-        guard !pendingCommandWrites.isEmpty else {
-            if let error {
-                print("[OSSM] Command write error without pending command: \(error.localizedDescription)")
-            } else {
-                print("[OSSM] Command write ACK without pending command")
-            }
-            return
-        }
-
-        let pendingWrite = pendingCommandWrites.removeFirst()
         if let error {
             print("[OSSM] Write error: \(error.localizedDescription)")
-            recordTransportResult(eventID: pendingWrite.eventID, result: .failure(error.localizedDescription))
-            logCommandError(for: pendingWrite.eventID, message: "Transport write failed")
-            pendingWrite.completion?(.failure(error))
-
-            if pendingWrite.isAwaited, let continuation = pendingAwaitedCommandResponseContinuation {
-                pendingAwaitedCommandResponseContinuation = nil
-                pendingAwaitedCommandResponseTimeoutTask?.cancel()
-                pendingAwaitedCommandResponseTimeoutTask = nil
-                pendingAwaitedCommandID = nil
-                continuation.resume(throwing: error)
-            }
+            failActiveCommand(error: error, outcome: .transportFailed)
             return
         }
 
-        recordTransportResult(eventID: pendingWrite.eventID, result: .success)
-        pendingWrite.completion?(.success(()))
-
-        if pendingWrite.isAwaited {
-            logCommandInfo(for: pendingWrite.eventID, message: "Awaited command transport ACK received")
+        guard let activeCommand else {
+            print("[OSSM] Command write ACK without pending command")
             return
         }
 
-        if pendingWrite.expectsResponse {
-            pendingCommandResponseIDs.append(pendingWrite.eventID)
-            scheduleCommandResponseTimeout(eventID: pendingWrite.eventID, timeout: commandResponseTimeout)
-            logCommandInfo(for: pendingWrite.eventID, message: "Transport ACK received; awaiting response in background")
-        } else {
-            recordCommandResponse(eventID: pendingWrite.eventID, response: nil, outcome: .succeeded)
-            logCommandInfo(for: pendingWrite.eventID, message: "Command completed at transport layer")
-        }
+        recordTransportResult(eventID: activeCommand.eventID, result: .success)
+        logCommandInfo(for: activeCommand.eventID, message: "Transport ACK received; reading command response")
+        scheduleActiveCommandTimeout()
+        peripheral.readValue(for: characteristic)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
