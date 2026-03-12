@@ -40,9 +40,16 @@ enum OSSMStatus: String, CaseIterable {
     case streamingPreflight = "streaming.preflight"
     case streamingIdle = "streaming.idle"
     case update = "update"
+    case updateChecking = "update.checking"
+    case updateUpdating = "update.updating"
+    case updateIdle = "update.idle"
     case wifi = "wifi"
+    case wifiIdle = "wifi.idle"
     case help = "help"
+    case helpIdle = "help.idle"
     case error = "error"
+    case errorIdle = "error.idle"
+    case errorHelp = "error.help"
     case restart = "restart"
 }
 
@@ -113,7 +120,7 @@ enum KnownPattern: Int, CaseIterable, Identifiable {
             **<0:** Reduce acceleration into a triangle profile
             """
         case .halfNHalf: return """
-            **>0:** Makes the in-move faster for a hard poinding senation
+            **>0:** Makes the in-move faster for a hard pounding sensation
             **<0:** Makes the out-move faster for a more teasing sensation
             """
         case .deeper: return """
@@ -195,9 +202,11 @@ enum OSSMConstants {
     // Characteristic UUIDs (from firmware nimble.cpp)
     static let commandCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-1000-420badbabe69")
     static let speedKnobConfigCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-1010-420badbabe69")
+    static let wifiCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-1020-420badbabe69")
     static let currentStateCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-2000-420badbabe69")
     static let patternListCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-3000-420badbabe69")
     static let patternDescriptionCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-3010-420badbabe69")
+    static let gpioCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-4000-420badbabe69")
 
     // Firmware command regex pattern (for reference):
     // go:(simplePenetration|strokeEngine|menu)|set:(speed|stroke|depth|sensation|pattern):\d+
