@@ -229,10 +229,24 @@ struct MenuView: PlatformSplitView {
     #endif
 }
 
+#if os(visionOS)
 #Preview {
-    @Previewable @Namespace var heroTransitionNamespace
-
-    NavigationStack{
-        MenuView(heroTransitionNamespace: heroTransitionNamespace)
+    NavigationStack {
+        MenuView()
     }
 }
+#else
+private struct MenuViewPreviewWrapper: View {
+    @Namespace private var heroTransitionNamespace
+
+    var body: some View {
+        NavigationStack {
+            MenuView(heroTransitionNamespace: heroTransitionNamespace)
+        }
+    }
+}
+
+#Preview {
+    MenuViewPreviewWrapper()
+}
+#endif

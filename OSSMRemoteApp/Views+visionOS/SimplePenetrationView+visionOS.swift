@@ -12,7 +12,9 @@ extension SimplePenetrationView {
             if bleManager.currentPage == .simplePenetration {
                 Text("Simple Penetration")
                 Button("Test"){
-                    bleManager.navigateTo(.menu)
+                    Task {
+                        try? await bleManager.navigateTo(.menu)
+                    }
                 }
             } else {
                 ProgressView()

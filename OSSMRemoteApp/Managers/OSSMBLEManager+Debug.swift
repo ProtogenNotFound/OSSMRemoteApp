@@ -127,36 +127,30 @@ extension OSSMBLEManager {
         }
     }
 
-    func handleDebugCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?) {
+    func handleDebugCommand(_ command: String) async throws {
         let parts = command.split(separator: ":")
         guard let verb = parts.first else {
-            completion?(.failure(OSSMError.invalidParameter("Empty command")))
-            return
+            throw OSSMError.invalidParameter("Empty command")
         }
 
         switch verb {
         case "go":
             guard parts.count >= 2 else {
-                completion?(.failure(OSSMError.invalidParameter("Missing page")))
-                return
+                throw OSSMError.invalidParameter("Missing page")
             }
             let pageString = String(parts[1])
             guard let page = OSSMPage(rawValue: pageString) else {
-                completion?(.failure(OSSMError.invalidParameter("Unknown page")))
-                return
+                throw OSSMError.invalidParameter("Unknown page")
             }
             setDebugPage(page)
-            completion?(.success(()))
 
         case "set":
             guard parts.count >= 3 else {
-                completion?(.failure(OSSMError.invalidParameter("Missing parameter")))
-                return
+                throw OSSMError.invalidParameter("Missing parameter")
             }
             let key = String(parts[1])
             guard let value = Int(parts[2]) else {
-                completion?(.failure(OSSMError.invalidParameter("Invalid value")))
-                return
+                throw OSSMError.invalidParameter("Invalid value")
             }
             updateRuntimeState { state in
                 switch key {
@@ -174,10 +168,9 @@ extension OSSMBLEManager {
                     break
                 }
             }
-            completion?(.success(()))
 
         default:
-            completion?(.success(()))
+            return
         }
     }
 

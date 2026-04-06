@@ -48,30 +48,25 @@ extension StrokeEngineView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button("Minus", systemImage: "minus") {
-                            adjustSpeed(by: -speedStepAmount)
+                            adjust(.speed, by: -speedStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(speed)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.speed <= sliderRange.lowerBound)
 
-                        Slider(value: $speed, in: 0...100, step: 1) { editing in
-                            isDraggingSpeed = editing
-                            if !editing {
-                                commitSpeed(Int(speed), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .speed), in: 0...100, step: 1)
 
                         Button("Plus", systemImage: "plus") {
-                            adjustSpeed(by: speedStepAmount)
+                            adjust(.speed, by: speedStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(speed)) >= sliderRange.upperBound)
+                        .disabled(currentControls.speed >= sliderRange.upperBound)
                     }.labelStyle(.iconOnly)
                 }
             } header: {
                 HStack {
                     Text("Speed")
                     Spacer()
-                    Text("\(Int(speed))%")
+                    Text("\(currentControls.speed)%")
                         .foregroundColor(.secondary)
                 }
 
@@ -82,23 +77,18 @@ extension StrokeEngineView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button("Minus", systemImage: "minus") {
-                            adjustStroke(by: -strokeStepAmount)
+                            adjust(.stroke, by: -strokeStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(stroke)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.stroke <= sliderRange.lowerBound)
 
-                        Slider(value: $stroke, in: 0...100, step: 1) { editing in
-                            isDraggingStroke = editing
-                            if !editing {
-                                commitStroke(Int(stroke), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .stroke), in: 0...100, step: 1)
 
                         Button("Plus", systemImage: "plus") {
-                            adjustStroke(by: strokeStepAmount)
+                            adjust(.stroke, by: strokeStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(stroke)) >= sliderRange.upperBound)
+                        .disabled(currentControls.stroke >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -106,7 +96,7 @@ extension StrokeEngineView {
                 HStack {
                     Text("Stroke")
                     Spacer()
-                    Text("\(Int(stroke))%")
+                    Text("\(currentControls.stroke)%")
                         .foregroundColor(.secondary)
                 }
             }
@@ -116,23 +106,18 @@ extension StrokeEngineView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button("Minus", systemImage: "minus") {
-                            adjustDepth(by: -depthStepAmount)
+                            adjust(.depth, by: -depthStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(depth)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.depth <= sliderRange.lowerBound)
 
-                        Slider(value: $depth, in: 0...100, step: 1) { editing in
-                            isDraggingDepth = editing
-                            if !editing {
-                                commitDepth(Int(depth), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .depth), in: 0...100, step: 1)
 
                         Button("Plus", systemImage: "plus") {
-                            adjustDepth(by: depthStepAmount)
+                            adjust(.depth, by: depthStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(depth)) >= sliderRange.upperBound)
+                        .disabled(currentControls.depth >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -140,7 +125,7 @@ extension StrokeEngineView {
                 HStack {
                     Text("Depth")
                     Spacer()
-                    Text("\(Int(depth))%")
+                    Text("\(currentControls.depth)%")
                         .foregroundColor(.secondary)
                 }
             }
@@ -150,23 +135,18 @@ extension StrokeEngineView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button("Minus", systemImage: "minus") {
-                            adjustSensation(by: -sensationStepAmount)
+                            adjust(.sensation, by: -sensationStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(sensation)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.sensation <= sliderRange.lowerBound)
 
-                        Slider(value: $sensation, in: 0...100, step: 1) { editing in
-                            isDraggingSensation = editing
-                            if !editing {
-                                commitSensation(Int(sensation), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .sensation), in: 0...100, step: 1)
 
                         Button("Plus", systemImage: "plus") {
-                            adjustSensation(by: sensationStepAmount)
+                            adjust(.sensation, by: sensationStepAmount)
                         }
                         .buttonStyle(.bordered)
-                        .disabled(clampSliderValue(Int(sensation)) >= sliderRange.upperBound)
+                        .disabled(currentControls.sensation >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -186,14 +166,14 @@ extension StrokeEngineView {
                             .presentationCompactAdaptation(.popover)
                     }
                     Spacer()
-                    Text("\(Int((sensation * 2) - 100))")
+                    Text("\(sensationDisplayValue)")
                         .foregroundColor(.secondary)
                 }
             }.disabled(selectedPatternInfo?.sensationDescription == nil)
 
             // Pattern Selection
             Section("Pattern") {
-                Picker("Selected:", selection: $selectedPattern) {
+                Picker("Selected:", selection: patternBinding) {
                     ForEach(availablePatterns) { pattern in
                         Section(pattern.name) {
                             Text(pattern.description ?? "")
@@ -204,18 +184,13 @@ extension StrokeEngineView {
                         }.tag(pattern.idx)
                     }
                 }
-                .onChange(of: selectedPattern) { _, newValue in
-                    lastInteractionTime = Date() // Record interaction time
-                    bleManager.setPattern(newValue)
-                }
             }
         }
         .padding([.horizontal, .bottom])
         .toolbar {
             ToolbarItemGroup(placement: .bottomOrnament) {
                 Button {
-                    bleManager.emergencyStop()
-                    speed = 0
+                    controls.setValue(0, for: .speed)
                 } label: {
                     HStack {
                         Image(systemName: "stop.circle.fill")
@@ -227,9 +202,6 @@ extension StrokeEngineView {
                 .buttonStyle(.borderedProminent)
                 Button {
                     bleManager.pullOut()
-                    speed = 5
-                    stroke = 0
-                    depth = 0
                 } label: {
                     HStack {
                         Image(systemName: "arrow.backward.to.line")
@@ -304,11 +276,16 @@ extension StrokeEngineView {
         .navigationTitle("Stroke Engine")
         .onAppear {
             sanitizeStoredSettings()
-            syncState()
+            controls.bind(to: bleManager)
+            controls.debugLoggingEnabled = sliderDebugLogging
+            controls.bootstrap(from: bleManager.runtimeData.currentState)
             ensureSelectedPresetStillExists()
         }
-        .onReceive(bleManager.runtimeData.$currentState) { _ in
-            syncState()
+        .onReceive(bleManager.runtimeData.$currentState) { state in
+            controls.receiveDeviceState(state)
+        }
+        .onChange(of: sliderDebugLogging) { _, newValue in
+            controls.debugLoggingEnabled = newValue
         }
     }
 }

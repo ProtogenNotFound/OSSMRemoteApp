@@ -154,7 +154,9 @@ struct OSSMControlView: PlatformSplitView {
         }
         .onChange(of: path, { _, newPath in
             let target = newPath.last ?? .menu
-            bleManager.navigateTo(target)
+            Task {
+                try? await bleManager.navigateTo(target)
+            }
         })
         .onChange(of: bleManager.discoveredPeripherals) { _, _ in
             tryConnectIfSaved()
@@ -174,7 +176,9 @@ struct OSSMControlView: PlatformSplitView {
         .onChange(of: bleManager.connectionStatus) { _, status in
             if status == .ready {
                 path = []
-                bleManager.navigateTo(.menu)
+                Task {
+                    try? await bleManager.navigateTo(.menu)
+                }
             }
         }
         .onReceive(bleManager.runtimeData.$currentSessionStats) { sessionStats in

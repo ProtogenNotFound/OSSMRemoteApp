@@ -236,13 +236,115 @@ final class OSSMSessionStatsRecord {
     }
 }
 
-/// Data structure for running stroke engine patterns
-struct OSSMPlayData {
-    var speed: Int
-    var stroke: Int
-    var depth: Int
-    var sensation: Int
-    var pattern: Int
+/// Stroke engine parameters that can be synchronized over BLE.
+enum StrokeEngineParameter: CaseIterable {
+    case pattern
+    case speed
+    case stroke
+    case depth
+    case sensation
+
+    static let syncOrder: [StrokeEngineParameter] = [
+        .speed,
+        .stroke,
+        .depth,
+        .sensation,
+        .pattern
+    ]
+
+    var commandKey: String {
+        switch self {
+        case .pattern:
+            return "pattern"
+        case .speed:
+            return "speed"
+        case .stroke:
+            return "stroke"
+        case .depth:
+            return "depth"
+        case .sensation:
+            return "sensation"
+        }
+    }
+
+    func clampedValue(_ value: Int) -> Int {
+        switch self {
+        case .pattern:
+            return max(0, value)
+        case .speed, .stroke, .depth, .sensation:
+            return max(0, min(100, value))
+        }
+    }
+}
+
+/// Data structure for running stroke engine patterns.
+struct OSSMPlayData: Equatable {
+    var speed: Int = 0
+    var stroke: Int = 0
+    var depth: Int = 0
+    var sensation: Int = 0
+    var pattern: Int = 0
+
+    init(
+        speed: Int = 0,
+        stroke: Int = 0,
+        depth: Int = 0,
+        sensation: Int = 0,
+        pattern: Int = 0
+    ) {
+        self.speed = StrokeEngineParameter.speed.clampedValue(speed)
+        self.stroke = StrokeEngineParameter.stroke.clampedValue(stroke)
+        self.depth = StrokeEngineParameter.depth.clampedValue(depth)
+        self.sensation = StrokeEngineParameter.sensation.clampedValue(sensation)
+        self.pattern = StrokeEngineParameter.pattern.clampedValue(pattern)
+    }
+
+    init(state: OSSMState) {
+        self.init(
+            speed: state.speed,
+            stroke: state.stroke,
+            depth: state.depth,
+            sensation: state.sensation,
+            pattern: state.pattern
+        )
+    }
+
+    func value(for parameter: StrokeEngineParameter) -> Int {
+        switch parameter {
+        case .pattern:
+            return pattern
+        case .speed:
+            return speed
+        case .stroke:
+            return stroke
+        case .depth:
+            return depth
+        case .sensation:
+            return sensation
+        }
+    }
+
+    mutating func setValue(_ value: Int, for parameter: StrokeEngineParameter) {
+        let clampedValue = parameter.clampedValue(value)
+        switch parameter {
+        case .pattern:
+            pattern = clampedValue
+        case .speed:
+            speed = clampedValue
+        case .stroke:
+            stroke = clampedValue
+        case .depth:
+            depth = clampedValue
+        case .sensation:
+            sensation = clampedValue
+        }
+    }
+}
+
+extension OSSMState {
+    var playData: OSSMPlayData {
+        OSSMPlayData(state: self)
+    }
 }
 
 // MARK: - OSSM BLE Constants (from firmware)

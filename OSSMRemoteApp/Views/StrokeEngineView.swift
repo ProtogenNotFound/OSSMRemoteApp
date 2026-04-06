@@ -35,38 +35,11 @@ struct StrokeEngineView: PlatformSplitView {
     let heroTransitionNamespace: Namespace.ID
     #endif
 
-    @State var speed: Double = 0
-    @State var stroke: Double = 50
-    @State var depth: Double = 50
-    @State var sensation: Double = 50
-    @State var selectedPattern: Int = 0
-
+    @StateObject var controls = StrokeEngineControlViewModel()
     @State var showSensationInfo: Bool = false
-
-    // Dragging state tracking
-    @State var isDraggingSpeed = false
-    @State var isDraggingStroke = false
-    @State var isDraggingDepth = false
-    @State var isDraggingSensation = false
-
-    @State var pendingSpeedTarget: Int?
-    @State var pendingSpeedTargetSetAt: Date = .distantPast
-    @State var pendingStrokeTarget: Int?
-    @State var pendingStrokeTargetSetAt: Date = .distantPast
-    @State var pendingDepthTarget: Int?
-    @State var pendingDepthTargetSetAt: Date = .distantPast
-    @State var pendingSensationTarget: Int?
-    @State var pendingSensationTargetSetAt: Date = .distantPast
-
-    @State var lastSpeedPendingLogAt: Date = .distantPast
-    @State var lastStrokePendingLogAt: Date = .distantPast
-    @State var lastDepthPendingLogAt: Date = .distantPast
-    @State var lastSensationPendingLogAt: Date = .distantPast
 
     let sliderRange: ClosedRange<Int> = 0...100
     let settingsRange: ClosedRange<Int> = 1...100
-    let pendingSliderSyncTimeout: TimeInterval = 4.0
-    let pendingLogThrottle: TimeInterval = 0.5
     var highSpeedPresetThreshold: Int {
         clampSettingsValue(highSpeedWarningThresholdSetting)
     }
@@ -98,8 +71,16 @@ struct StrokeEngineView: PlatformSplitView {
         return bleManager.patterns.sorted { $0.idx < $1.idx }
     }
 
+    var currentControls: OSSMPlayData {
+        controls.desiredState
+    }
+
+    var sensationDisplayValue: Int {
+        Int((Double(currentControls.sensation) * 2) - 100)
+    }
+
     var selectedPatternInfo: OSSMPattern? {
-        availablePatterns.first(where: { $0.idx == selectedPattern })
+        availablePatterns.first(where: { $0.idx == currentControls.pattern })
     }
 
     var selectedPreset: StrokeEnginePreset? {
@@ -165,34 +146,29 @@ struct StrokeEngineView: PlatformSplitView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustSpeed(by: -speedStepAmount)
+                            adjust(.speed, by: -speedStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(speed)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.speed <= sliderRange.lowerBound)
 
-                        Slider(value: $speed, in: 0...100, step: 1) { editing in
-                            isDraggingSpeed = editing
-                            if !editing {
-                                commitSpeed(Int(speed), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .speed), in: 0...100, step: 1)
 
                         Button {
-                            adjustSpeed(by: speedStepAmount)
+                            adjust(.speed, by: speedStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(speed)) >= sliderRange.upperBound)
+                        .disabled(currentControls.speed >= sliderRange.upperBound)
                     }.labelStyle(.iconOnly)
                 }
             } header: {
                 HStack {
                     Text("Speed")
                     Spacer()
-                    Text("\(Int(speed))%")
+                    Text("\(currentControls.speed)%")
                         .foregroundColor(.secondary)
                 }
 
@@ -203,27 +179,22 @@ struct StrokeEngineView: PlatformSplitView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustStroke(by: -strokeStepAmount)
+                            adjust(.stroke, by: -strokeStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(stroke)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.stroke <= sliderRange.lowerBound)
 
-                        Slider(value: $stroke, in: 0...100, step: 1) { editing in
-                            isDraggingStroke = editing
-                            if !editing {
-                                commitStroke(Int(stroke), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .stroke), in: 0...100, step: 1)
 
                         Button {
-                            adjustStroke(by: strokeStepAmount)
+                            adjust(.stroke, by: strokeStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(stroke)) >= sliderRange.upperBound)
+                        .disabled(currentControls.stroke >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -231,7 +202,7 @@ struct StrokeEngineView: PlatformSplitView {
                 HStack {
                     Text("Stroke")
                     Spacer()
-                    Text("\(Int(stroke))%")
+                    Text("\(currentControls.stroke)%")
                         .foregroundColor(.secondary)
                 }
             }
@@ -241,27 +212,22 @@ struct StrokeEngineView: PlatformSplitView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustDepth(by: -depthStepAmount)
+                            adjust(.depth, by: -depthStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(depth)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.depth <= sliderRange.lowerBound)
 
-                        Slider(value: $depth, in: 0...100, step: 1) { editing in
-                            isDraggingDepth = editing
-                            if !editing {
-                                commitDepth(Int(depth), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .depth), in: 0...100, step: 1)
 
                         Button {
-                            adjustDepth(by: depthStepAmount)
+                            adjust(.depth, by: depthStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(depth)) >= sliderRange.upperBound)
+                        .disabled(currentControls.depth >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -269,7 +235,7 @@ struct StrokeEngineView: PlatformSplitView {
                 HStack {
                     Text("Depth")
                     Spacer()
-                    Text("\(Int(depth))%")
+                    Text("\(currentControls.depth)%")
                         .foregroundColor(.secondary)
                 }
             }
@@ -279,27 +245,22 @@ struct StrokeEngineView: PlatformSplitView {
                 VStack(alignment: .leading) {
                     HStack {
                         Button {
-                            adjustSensation(by: -sensationStepAmount)
+                            adjust(.sensation, by: -sensationStepAmount)
                         } label: {
                             Image(systemName: "minus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(sensation)) <= sliderRange.lowerBound)
+                        .disabled(currentControls.sensation <= sliderRange.lowerBound)
 
-                        Slider(value: $sensation, in: 0...100, step: 1) { editing in
-                            isDraggingSensation = editing
-                            if !editing {
-                                commitSensation(Int(sensation), source: .sliderRelease)
-                            }
-                        }
+                        Slider(value: sliderBinding(for: .sensation), in: 0...100, step: 1)
 
                         Button {
-                            adjustSensation(by: sensationStepAmount)
+                            adjust(.sensation, by: sensationStepAmount)
                         } label: {
                             Image(systemName: "plus.circle.fill")
                         }
                         .buttonStyle(.borderless)
-                        .disabled(clampSliderValue(Int(sensation)) >= sliderRange.upperBound)
+                        .disabled(currentControls.sensation >= sliderRange.upperBound)
                     }
                     .labelStyle(.iconOnly)
                 }
@@ -318,14 +279,14 @@ struct StrokeEngineView: PlatformSplitView {
                             .presentationCompactAdaptation(.popover)
                     }
                     Spacer()
-                    Text("\(Int((sensation * 2) - 100))")
+                    Text("\(sensationDisplayValue)")
                         .foregroundColor(.secondary)
                 }
             }.disabled(selectedPatternInfo?.sensationDescription == nil)
 
             // Pattern Selection
             Section("Pattern") {
-                Picker("Selected:", selection: $selectedPattern) {
+                Picker("Selected:", selection: patternBinding) {
                     ForEach(availablePatterns) { pattern in
                         Section(pattern.name) {
                             Text(pattern.description ?? "")
@@ -335,10 +296,6 @@ struct StrokeEngineView: PlatformSplitView {
                                 .padding(.horizontal, 8)
                         }.tag(pattern.idx)
                     }
-                }
-                .onChange(of: selectedPattern) { _, newValue in
-                    lastInteractionTime = Date() // Record interaction time
-                    bleManager.setPattern(newValue)
                 }
             }
         }
@@ -350,8 +307,7 @@ struct StrokeEngineView: PlatformSplitView {
             }
             ToolbarItemGroup(placement: .bottomBar) {
                 Button {
-                    bleManager.emergencyStop()
-                    speed = 0
+                    controls.setValue(0, for: .speed)
                 } label: {
                     HStack {
                         Image(systemName: "stop.circle.fill")
@@ -363,9 +319,6 @@ struct StrokeEngineView: PlatformSplitView {
                 .buttonStyle(.borderedProminent)
                 Button {
                     bleManager.pullOut()
-                    speed = 5
-                    stroke = 0
-                    depth = 0
                 } label: {
                     HStack {
                         Image(systemName: "arrow.backward.to.line")
@@ -436,134 +389,19 @@ struct StrokeEngineView: PlatformSplitView {
         .navigationTransition(.zoom(sourceID: "strokeEngineTitleZoom", in: heroTransitionNamespace))
         .onAppear {
             sanitizeStoredSettings()
-            syncState()
+            controls.bind(to: bleManager)
+            controls.debugLoggingEnabled = sliderDebugLogging
+            controls.bootstrap(from: bleManager.runtimeData.currentState)
             ensureSelectedPresetStillExists()
         }
-        .onReceive(bleManager.runtimeData.$currentState) { _ in
-            syncState()
+        .onReceive(bleManager.runtimeData.$currentState) { state in
+            controls.receiveDeviceState(state)
+        }
+        .onChange(of: sliderDebugLogging) { _, newValue in
+            controls.debugLoggingEnabled = newValue
         }
     }
     #endif
-
-    // Lockout timer to prevent incoming packets from resetting selection while user is interacting
-    @State var lastInteractionTime: Date = Date.distantPast
-
-    func syncState() {
-        let state = bleManager.runtimeData.currentState
-        let now = Date()
-
-        if !isDraggingSpeed {
-            if let pendingTarget = pendingSpeedTarget, state.speed != pendingTarget {
-                if now.timeIntervalSince(pendingSpeedTargetSetAt) < pendingSliderSyncTimeout {
-                    if now.timeIntervalSince(lastSpeedPendingLogAt) >= pendingLogThrottle {
-                        logSlider("Holding speed UI at \(Int(speed)) while awaiting \(pendingTarget); incoming \(state.speed)")
-                        lastSpeedPendingLogAt = now
-                    }
-                } else {
-                    logSlider("Speed pending target \(pendingTarget) timed out; applying incoming \(state.speed)")
-                    let incomingSpeed = Double(state.speed)
-                    if speed != incomingSpeed {
-                        speed = incomingSpeed
-                    }
-                    clearPendingSpeedTarget()
-                }
-            } else {
-                if let pendingTarget = pendingSpeedTarget, state.speed == pendingTarget {
-                    logSlider("Speed matched pending target \(pendingTarget)")
-                }
-                let incomingSpeed = Double(state.speed)
-                if speed != incomingSpeed {
-                    speed = incomingSpeed
-                }
-                clearPendingSpeedTarget()
-            }
-        }
-        if !isDraggingStroke {
-            if let pendingTarget = pendingStrokeTarget, state.stroke != pendingTarget {
-                if now.timeIntervalSince(pendingStrokeTargetSetAt) < pendingSliderSyncTimeout {
-                    if now.timeIntervalSince(lastStrokePendingLogAt) >= pendingLogThrottle {
-                        logSlider("Holding stroke UI at \(Int(stroke)) while awaiting \(pendingTarget); incoming \(state.stroke)")
-                        lastStrokePendingLogAt = now
-                    }
-                } else {
-                    logSlider("Stroke pending target \(pendingTarget) timed out; applying incoming \(state.stroke)")
-                    let incomingStroke = Double(state.stroke)
-                    if stroke != incomingStroke {
-                        stroke = incomingStroke
-                    }
-                    clearPendingStrokeTarget()
-                }
-            } else {
-                if let pendingTarget = pendingStrokeTarget, state.stroke == pendingTarget {
-                    logSlider("Stroke matched pending target \(pendingTarget)")
-                }
-                let incomingStroke = Double(state.stroke)
-                if stroke != incomingStroke {
-                    stroke = incomingStroke
-                }
-                clearPendingStrokeTarget()
-            }
-        }
-        if !isDraggingDepth {
-            if let pendingTarget = pendingDepthTarget, state.depth != pendingTarget {
-                if now.timeIntervalSince(pendingDepthTargetSetAt) < pendingSliderSyncTimeout {
-                    if now.timeIntervalSince(lastDepthPendingLogAt) >= pendingLogThrottle {
-                        logSlider("Holding depth UI at \(Int(depth)) while awaiting \(pendingTarget); incoming \(state.depth)")
-                        lastDepthPendingLogAt = now
-                    }
-                } else {
-                    logSlider("Depth pending target \(pendingTarget) timed out; applying incoming \(state.depth)")
-                    let incomingDepth = Double(state.depth)
-                    if depth != incomingDepth {
-                        depth = incomingDepth
-                    }
-                    clearPendingDepthTarget()
-                }
-            } else {
-                if let pendingTarget = pendingDepthTarget, state.depth == pendingTarget {
-                    logSlider("Depth matched pending target \(pendingTarget)")
-                }
-                let incomingDepth = Double(state.depth)
-                if depth != incomingDepth {
-                    depth = incomingDepth
-                }
-                clearPendingDepthTarget()
-            }
-        }
-        if !isDraggingSensation {
-            if let pendingTarget = pendingSensationTarget, state.sensation != pendingTarget {
-                if now.timeIntervalSince(pendingSensationTargetSetAt) < pendingSliderSyncTimeout {
-                    if now.timeIntervalSince(lastSensationPendingLogAt) >= pendingLogThrottle {
-                        logSlider("Holding sensation UI at \(Int(sensation)) while awaiting \(pendingTarget); incoming \(state.sensation)")
-                        lastSensationPendingLogAt = now
-                    }
-                } else {
-                    logSlider("Sensation pending target \(pendingTarget) timed out; applying incoming \(state.sensation)")
-                    let incomingSensation = Double(state.sensation)
-                    if sensation != incomingSensation {
-                        sensation = incomingSensation
-                    }
-                    clearPendingSensationTarget()
-                }
-            } else {
-                if let pendingTarget = pendingSensationTarget, state.sensation == pendingTarget {
-                    logSlider("Sensation matched pending target \(pendingTarget)")
-                }
-                let incomingSensation = Double(state.sensation)
-                if sensation != incomingSensation {
-                    sensation = incomingSensation
-                }
-                clearPendingSensationTarget()
-            }
-        }
-
-        // Only sync pattern if we haven't interacted with it recently (1.5s lockout)
-        if Date().timeIntervalSince(lastInteractionTime) > 1.5 {
-             if selectedPattern != state.pattern {
-                selectedPattern = state.pattern
-            }
-        }
-    }
 
     func ensureSelectedPresetStillExists() {
         guard let selectedPresetID else { return }
@@ -578,11 +416,11 @@ struct StrokeEngineView: PlatformSplitView {
 
         let preset = StrokeEnginePreset(
             name: name,
-            speed: clampSliderValue(Int(speed)),
-            stroke: clampSliderValue(Int(stroke)),
-            depth: clampSliderValue(Int(depth)),
-            sensation: clampSliderValue(Int(sensation)),
-            pattern: selectedPattern,
+            speed: currentControls.speed,
+            stroke: currentControls.stroke,
+            depth: currentControls.depth,
+            sensation: currentControls.sensation,
+            pattern: currentControls.pattern,
             sortOrder: (presets.map(\.sortOrder).max() ?? -1) + 1
         )
 
@@ -599,18 +437,15 @@ struct StrokeEngineView: PlatformSplitView {
     }
 
     func applyPreset(_ preset: StrokeEnginePreset, speedOverride: Int? = nil) {
-        let targetSpeed = speedOverride ?? preset.speed
-        logSlider("Applying preset '\(preset.name)' at speed \(targetSpeed)%")
-        lastInteractionTime = Date()
-        if selectedPattern != preset.pattern {
-            selectedPattern = preset.pattern
-        } else {
-            bleManager.setPattern(preset.pattern)
-        }
-        commitSpeed(targetSpeed, source: .presetLoad)
-        commitStroke(preset.stroke, source: .presetLoad)
-        commitDepth(preset.depth, source: .presetLoad)
-        commitSensation(preset.sensation, source: .presetLoad)
+        controls.apply(
+            OSSMPlayData(
+                speed: speedOverride ?? preset.speed,
+                stroke: preset.stroke,
+                depth: preset.depth,
+                sensation: preset.sensation,
+                pattern: preset.pattern
+            )
+        )
     }
 
     func handlePresetSelectionChange(from oldValue: UUID?, to newValue: UUID?) {
@@ -652,96 +487,30 @@ struct StrokeEngineView: PlatformSplitView {
         showHighSpeedPresetWarning = false
     }
 
-    func adjustSpeed(by delta: Int) {
-        logSlider("Tap speed \(delta > 0 ? "+" : "-")")
-        isDraggingSpeed = false
-        commitSpeed(Int(speed) + delta, source: .buttonTap)
+    func adjust(_ parameter: StrokeEngineParameter, by delta: Int) {
+        controls.adjustValue(for: parameter, by: delta)
     }
 
-    func adjustStroke(by delta: Int) {
-        logSlider("Tap stroke \(delta > 0 ? "+" : "-")")
-        isDraggingStroke = false
-        commitStroke(Int(stroke) + delta, source: .buttonTap)
-    }
-
-    func adjustDepth(by delta: Int) {
-        logSlider("Tap depth \(delta > 0 ? "+" : "-")")
-        isDraggingDepth = false
-        commitDepth(Int(depth) + delta, source: .buttonTap)
-    }
-
-    func adjustSensation(by delta: Int) {
-        logSlider("Tap sensation \(delta > 0 ? "+" : "-")")
-        isDraggingSensation = false
-        commitSensation(Int(sensation) + delta, source: .buttonTap)
-    }
-
-    func commitSpeed(_ value: Int, source: SliderUpdateSource) {
-        let clampedValue = clampSliderValue(value)
-        logSlider("Commit speed (\(source.rawValue)): \(Int(speed)) -> \(clampedValue)")
-        speed = Double(clampedValue)
-        pendingSpeedTarget = clampedValue
-        pendingSpeedTargetSetAt = Date()
-        bleManager.setSpeed(clampedValue) { result in
-            if case .failure(let error) = result {
-                DispatchQueue.main.async {
-                    self.logSlider("Speed command failed: \(error.localizedDescription)")
-                    self.clearPendingSpeedTarget()
-                }
+    func sliderBinding(for parameter: StrokeEngineParameter) -> Binding<Double> {
+        Binding(
+            get: {
+                Double(controls.value(for: parameter))
+            },
+            set: { newValue in
+                controls.setValue(Int(newValue.rounded()), for: parameter)
             }
-        }
+        )
     }
 
-    func commitStroke(_ value: Int, source: SliderUpdateSource) {
-        let clampedValue = clampSliderValue(value)
-        logSlider("Commit stroke (\(source.rawValue)): \(Int(stroke)) -> \(clampedValue)")
-        stroke = Double(clampedValue)
-        pendingStrokeTarget = clampedValue
-        pendingStrokeTargetSetAt = Date()
-        bleManager.setStroke(clampedValue) { result in
-            if case .failure(let error) = result {
-                DispatchQueue.main.async {
-                    self.logSlider("Stroke command failed: \(error.localizedDescription)")
-                    self.clearPendingStrokeTarget()
-                }
+    var patternBinding: Binding<Int> {
+        Binding(
+            get: {
+                controls.value(for: .pattern)
+            },
+            set: { newValue in
+                controls.setValue(newValue, for: .pattern)
             }
-        }
-    }
-
-    func commitDepth(_ value: Int, source: SliderUpdateSource) {
-        let clampedValue = clampSliderValue(value)
-        logSlider("Commit depth (\(source.rawValue)): \(Int(depth)) -> \(clampedValue)")
-        depth = Double(clampedValue)
-        pendingDepthTarget = clampedValue
-        pendingDepthTargetSetAt = Date()
-        bleManager.setDepth(clampedValue) { result in
-            if case .failure(let error) = result {
-                DispatchQueue.main.async {
-                    self.logSlider("Depth command failed: \(error.localizedDescription)")
-                    self.clearPendingDepthTarget()
-                }
-            }
-        }
-    }
-
-    func commitSensation(_ value: Int, source: SliderUpdateSource) {
-        let clampedValue = clampSliderValue(value)
-        logSlider("Commit sensation (\(source.rawValue)): \(Int(sensation)) -> \(clampedValue)")
-        sensation = Double(clampedValue)
-        pendingSensationTarget = clampedValue
-        pendingSensationTargetSetAt = Date()
-        bleManager.setSensation(clampedValue) { result in
-            if case .failure(let error) = result {
-                DispatchQueue.main.async {
-                    self.logSlider("Sensation command failed: \(error.localizedDescription)")
-                    self.clearPendingSensationTarget()
-                }
-            }
-        }
-    }
-
-    func clampSliderValue(_ value: Int) -> Int {
-        max(sliderRange.lowerBound, min(sliderRange.upperBound, value))
+        )
     }
 
     func clampSettingsValue(_ value: Int) -> Int {
@@ -792,41 +561,6 @@ struct StrokeEngineView: PlatformSplitView {
         strokeStepAmountSetting = clampSettingsValue(strokeStepAmountSetting)
         depthStepAmountSetting = clampSettingsValue(depthStepAmountSetting)
         sensationStepAmountSetting = clampSettingsValue(sensationStepAmountSetting)
-    }
-
-    func clearPendingSpeedTarget() {
-        pendingSpeedTarget = nil
-        pendingSpeedTargetSetAt = .distantPast
-        lastSpeedPendingLogAt = .distantPast
-    }
-
-    func clearPendingStrokeTarget() {
-        pendingStrokeTarget = nil
-        pendingStrokeTargetSetAt = .distantPast
-        lastStrokePendingLogAt = .distantPast
-    }
-
-    func clearPendingDepthTarget() {
-        pendingDepthTarget = nil
-        pendingDepthTargetSetAt = .distantPast
-        lastDepthPendingLogAt = .distantPast
-    }
-
-    func clearPendingSensationTarget() {
-        pendingSensationTarget = nil
-        pendingSensationTargetSetAt = .distantPast
-        lastSensationPendingLogAt = .distantPast
-    }
-
-    func logSlider(_ message: String) {
-        guard sliderDebugLogging else { return }
-        print("[StrokeEngine][Slider] \(message)")
-    }
-
-    enum SliderUpdateSource: String {
-        case sliderRelease = "slider"
-        case buttonTap = "button"
-        case presetLoad = "preset"
     }
 }
 

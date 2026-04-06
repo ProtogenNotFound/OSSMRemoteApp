@@ -352,7 +352,7 @@ struct StreamingView: PlatformSplitView {
                         depth: snapshot.depth
                     )
 
-                    bleManager.streamGoTo(position: position, time: segmentMilliseconds)
+                    try? await bleManager.streamGoTo(position: position, time: segmentMilliseconds)
 
                     if segmentMilliseconds > 0 {
                         try? await Task.sleep(for: .milliseconds(segmentMilliseconds))
@@ -375,4 +375,3 @@ struct StreamingView: PlatformSplitView {
         return Int(round(max(0.0, min(100.0, scaled))))
     }
 }
-

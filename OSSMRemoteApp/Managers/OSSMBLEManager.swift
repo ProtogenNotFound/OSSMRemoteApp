@@ -68,16 +68,10 @@ class OSSMBLEManager: NSObject, ObservableObject {
     private var patternDescriptionCharacteristic: CBCharacteristic?
     private var gpioCharacteristic: CBCharacteristic?
 
-    // Command response handling
-    private enum PendingCommandDelivery {
-        case completion(((Result<Void, Error>) -> Void)?)
-        case rawResponse(CheckedContinuation<String, Error>)
-    }
-
     private struct PendingCommand {
         let eventID: UUID
         let command: String
-        let delivery: PendingCommandDelivery
+        let continuation: CheckedContinuation<String, Error>
         let timeout: TimeInterval
     }
 
@@ -204,7 +198,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
         // Try to stop the device safely before disconnecting
         if isReady {
-            sendCommandFireAndForget("set:speed:0")
+            Task {
+                try? await self.setSpeed(0)
+            }
         }
 
         if let peripheral = ossmPeripheral {
@@ -239,115 +235,123 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     /// Emergency stop - immediately stops the OSSM device
     func emergencyStop() {
-        sendCommandFireAndForget("set:speed:0")
+        Task {
+            try? await setSpeed(0)
+        }
     }
 
     func pullOut() {
         Task {
             // Speed 5, Stroke 5, Depth 0
-            setSpeed(5)
-            setStroke(5)
-            try! await Task.sleep(for: .seconds(2))
-            setDepth(0)
+            try? await setDepth(0)
+            try? await setSpeed(5)
+            try await Task.sleep(for: .seconds(2))
+            try? await setStroke(5)
         }
     }
 
     /// Set speed (0-100)
     /// IMPORTANT: If speedKnobAsLimit is true (default), this is a percentage of the physical knob position
     /// Set speedKnobAsLimit to false for direct BLE speed control
-    func setSpeed(_ speed: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setSpeed(_ speed: Int) async throws {
         guard speed >= 0 && speed <= 100 else {
-            completion?(.failure(OSSMError.invalidParameter("Speed must be between 0 and 100")))
-            return
+            throw OSSMError.invalidParameter("Speed must be between 0 and 100")
         }
-        // Firmware expects raw value, no adjustment needed
-        sendCommand("set:speed:\(speed)", completion: completion)
+
+        _ = try await sendCommandAndAwaitResponse("set:speed:\(speed)")
     }
 
     /// Set stroke length (0-100)
-    func setStroke(_ stroke: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setStroke(_ stroke: Int) async throws {
         guard stroke >= 0 && stroke <= 100 else {
-            completion?(.failure(OSSMError.invalidParameter("Stroke must be between 0 and 100")))
-            return
+            throw OSSMError.invalidParameter("Stroke must be between 0 and 100")
         }
-        // Firmware expects raw value, no adjustment needed
-        sendCommand("set:stroke:\(stroke)", completion: completion)
+
+        _ = try await sendCommandAndAwaitResponse("set:stroke:\(stroke)")
     }
 
     /// Set depth (0-100)
-    func setDepth(_ depth: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setDepth(_ depth: Int) async throws {
         guard depth >= 0 && depth <= 100 else {
-            completion?(.failure(OSSMError.invalidParameter("Depth must be between 0 and 100")))
-            return
+            throw OSSMError.invalidParameter("Depth must be between 0 and 100")
         }
-        // Firmware expects raw value, no adjustment needed
-        sendCommand("set:depth:\(depth)", completion: completion)
+
+        _ = try await sendCommandAndAwaitResponse("set:depth:\(depth)")
     }
 
     /// Set sensation (0-100)
-    func setSensation(_ sensation: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setSensation(_ sensation: Int) async throws {
         guard sensation >= 0 && sensation <= 100 else {
-            completion?(.failure(OSSMError.invalidParameter("Sensation must be between 0 and 100")))
-            return
+            throw OSSMError.invalidParameter("Sensation must be between 0 and 100")
         }
-        // Firmware expects raw value, no adjustment needed
-        sendCommand("set:sensation:\(sensation)", completion: completion)
+
+        _ = try await sendCommandAndAwaitResponse("set:sensation:\(sensation)")
     }
 
     /// Set pattern by ID (0-6, will be modulo 7 in firmware)
-    func setPattern(_ patternId: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setPattern(_ patternId: Int) async throws {
         guard patternId >= 0 else {
-            completion?(.failure(OSSMError.invalidParameter("Pattern ID must be non-negative")))
-            return
+            throw OSSMError.invalidParameter("Pattern ID must be non-negative")
         }
-        sendCommand("set:pattern:\(patternId)", completion: completion)
+
+        _ = try await sendCommandAndAwaitResponse("set:pattern:\(patternId)")
+    }
+
+    func setStrokeEngineParameter(_ parameter: StrokeEngineParameter, value: Int) async throws {
+        switch parameter {
+        case .pattern:
+            try await setPattern(value)
+        case .speed:
+            try await setSpeed(value)
+        case .stroke:
+            try await setStroke(value)
+        case .depth:
+            try await setDepth(value)
+        case .sensation:
+            try await setSensation(value)
+        }
     }
 
     /// Go to positon (0-100%) in time (ms), only works in stream mode
-    func streamGoTo(position: Int, time: Int, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func streamGoTo(position: Int, time: Int) async throws {
         guard self.currentPage == .streaming else {
-            completion?(.failure(OSSMError.notReady))
-            return
+            throw OSSMError.notReady
         }
         guard position >= 0 && position <= 100 else {
-            completion?(.failure(OSSMError.invalidParameter("Position must be between 0 and 100")))
-            return
+            throw OSSMError.invalidParameter("Position must be between 0 and 100")
         }
         guard time >= 0 else {
-            completion?(.failure(OSSMError.invalidParameter("Time must be non-negative")))
-            return
+            throw OSSMError.invalidParameter("Time must be non-negative")
         }
-        sendCommandFireAndForget("stream:\(position):\(time)")
+
+        _ = try await sendCommandAndAwaitResponse("stream:\(position):\(time)")
     }
 
     /// Navigate to a specific page
     /// Valid values: menu, simplePenetration, strokeEngine
-    func navigateTo(_ page: OSSMPage, completion: ((Result<Void, Error>) -> Void)? = nil) {
-        sendCommand("go:\(page.rawValue)", completion: completion)
+    func navigateTo(_ page: OSSMPage) async throws {
+        _ = try await sendCommandAndAwaitResponse("go:\(page.rawValue)")
     }
 
     /// Configure speed knob behavior
     /// - Parameter knobAsLimit: When true (default), BLE speed is percentage of physical knob.
     ///                          When false, BLE speed commands control speed directly.
     /// IMPORTANT: You likely need to set this to false for BLE speed control to work independently!
-    func setSpeedKnobConfig(knobAsLimit: Bool, completion: ((Result<Void, Error>) -> Void)? = nil) {
+    func setSpeedKnobConfig(knobAsLimit: Bool) async throws {
         if isDebugMode {
             DispatchQueue.main.async {
                 self.speedKnobAsLimit = knobAsLimit
             }
-            completion?(.success(()))
             return
         }
         guard let characteristic = speedKnobConfigCharacteristic else {
-            completion?(.failure(OSSMError.notReady))
-            return
+            throw OSSMError.notReady
         }
 
         // Firmware accepts: "true", "1", "t" for true; "false", "0", "f" for false
         let value = knobAsLimit ? "true" : "false"
         guard let data = value.data(using: .utf8) else {
-            completion?(.failure(OSSMError.invalidParameter("Failed to encode config value")))
-            return
+            throw OSSMError.invalidParameter("Failed to encode config value")
         }
 
         ossmPeripheral?.writeValue(data, for: characteristic, type: .withResponse)
@@ -356,8 +360,6 @@ class OSSMBLEManager: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.speedKnobAsLimit = knobAsLimit
         }
-
-        completion?(.success(()))
     }
 
     /// Persist and apply preferred speed knob behavior.
@@ -366,7 +368,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
         if persist {
             UserDefaults.standard.set(knobAsLimit, forKey: speedKnobPreferenceKey)
         }
-        setSpeedKnobConfig(knobAsLimit: knobAsLimit, completion: nil)
+        Task {
+            try? await setSpeedKnobConfig(knobAsLimit: knobAsLimit)
+        }
     }
 
     /// Load the user's persisted speed knob preference.
@@ -414,11 +418,6 @@ class OSSMBLEManager: NSObject, ObservableObject {
 
     // MARK: - Private Command Methods
 
-    /// Send a command and don't wait for response (fire and forget)
-    private func sendCommandFireAndForget(_ command: String) {
-        enqueueCommand(command, delivery: .completion(nil), timeout: defaultCommandResponseTimeout)
-    }
-
     /// Send a command and await the firmware response string.
     /// - Parameters:
     ///   - command: Firmware command string (e.g. "set:speed:50").
@@ -426,8 +425,8 @@ class OSSMBLEManager: NSObject, ObservableObject {
     /// - Returns: The raw response string received from the device.
     func sendCommandAndAwaitResponse(_ command: String, timeout: TimeInterval = 2.0) async throws -> String {
         if isDebugMode {
-            handleDebugCommand(command, completion: nil)
-            return "ok"
+            try await handleDebugCommand(command)
+            return "ok:\(command)"
         }
         guard isReady else { throw OSSMError.notReady }
         guard commandCharacteristic != nil else { throw OSSMError.characteristicNotFound }
@@ -436,48 +435,21 @@ class OSSMBLEManager: NSObject, ObservableObject {
         }
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
-            self.enqueueCommand(command, delivery: .rawResponse(continuation), timeout: timeout)
+            self.enqueueCommand(command, continuation: continuation, timeout: timeout)
         }
-    }
-
-    /// Send a command with completion handler
-    private func sendCommand(_ command: String, completion: ((Result<Void, Error>) -> Void)?) {
-        if isDebugMode {
-            handleDebugCommand(command, completion: completion)
-            return
-        }
-        guard isReady else {
-            completion?(.failure(OSSMError.notReady))
-            return
-        }
-        guard commandCharacteristic != nil else {
-            completion?(.failure(OSSMError.characteristicNotFound))
-            return
-        }
-        enqueueCommand(command, delivery: .completion(completion), timeout: defaultCommandResponseTimeout)
     }
 
     private func enqueueCommand(
         _ command: String,
-        delivery: PendingCommandDelivery,
+        continuation: CheckedContinuation<String, Error>,
         timeout: TimeInterval
     ) {
         guard commandCharacteristic != nil else {
-            switch delivery {
-            case .completion(let completion):
-                completion?(.failure(OSSMError.characteristicNotFound))
-            case .rawResponse(let continuation):
-                continuation.resume(throwing: OSSMError.characteristicNotFound)
-            }
+            continuation.resume(throwing: OSSMError.characteristicNotFound)
             return
         }
         guard command.data(using: .utf8) != nil else {
-            switch delivery {
-            case .completion(let completion):
-                completion?(.failure(OSSMError.invalidParameter("Failed to encode command")))
-            case .rawResponse(let continuation):
-                continuation.resume(throwing: OSSMError.invalidParameter("Failed to encode command"))
-            }
+            continuation.resume(throwing: OSSMError.invalidParameter("Failed to encode command"))
             return
         }
 
@@ -485,7 +457,7 @@ class OSSMBLEManager: NSObject, ObservableObject {
             PendingCommand(
                 eventID: registerCommandEvent(command),
                 command: command,
-                delivery: delivery,
+                continuation: continuation,
                 timeout: timeout
             )
         )
@@ -600,12 +572,7 @@ class OSSMBLEManager: NSObject, ObservableObject {
             failCommand(activeCommand, error: OSSMError.commandFailed(response))
         case .malformedResponse:
             logCommandWarning(for: activeCommand.eventID, message: "Command returned malformed response")
-            switch activeCommand.delivery {
-            case .completion:
-                failCommand(activeCommand, error: OSSMError.invalidResponse)
-            case .rawResponse:
-                succeedCommand(activeCommand, response: response)
-            }
+            failCommand(activeCommand, error: OSSMError.invalidResponse)
         default:
             failCommand(activeCommand, error: OSSMError.invalidResponse)
         }
@@ -644,21 +611,11 @@ class OSSMBLEManager: NSObject, ObservableObject {
     }
 
     private func succeedCommand(_ command: PendingCommand, response: String) {
-        switch command.delivery {
-        case .completion(let completion):
-            completion?(.success(()))
-        case .rawResponse(let continuation):
-            continuation.resume(returning: response)
-        }
+        command.continuation.resume(returning: response)
     }
 
     private func failCommand(_ command: PendingCommand, error: Error) {
-        switch command.delivery {
-        case .completion(let completion):
-            completion?(.failure(error))
-        case .rawResponse(let continuation):
-            continuation.resume(throwing: error)
-        }
+        command.continuation.resume(throwing: error)
     }
 
     private func beginInitialDeviceSetup() {
@@ -675,7 +632,9 @@ class OSSMBLEManager: NSObject, ObservableObject {
                     self.connectionStatus = .ready
 
                     if self.speedKnobConfigCharacteristic != nil {
-                        self.setSpeedKnobConfig(knobAsLimit: self.loadSpeedKnobPreference())
+                        Task {
+                            try? await self.setSpeedKnobConfig(knobAsLimit: self.loadSpeedKnobPreference())
+                        }
                     }
 
                     self.refreshPatterns()
