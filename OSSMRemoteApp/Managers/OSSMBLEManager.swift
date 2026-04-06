@@ -33,9 +33,13 @@ class OSSMBLEManager: NSObject, ObservableObject {
     @Published var discoveredPeripherals: [CBPeripheral] = []
     @Published var speedKnobAsLimit: Bool = true
     @Published var homingEstimatedEndTime: Date?
+    @Published var supportsSessionStats: Bool = false
 
     // High-frequency data container (Not @Published in the manager itself)
     let runtimeData = OSSMRuntimeData()
+
+    // Debug session simulator (all logic lives in OSSMBLEManager+Debug.swift)
+    lazy var debugSessionSimulator = DebugSessionSimulator(runtimeData: runtimeData)
 
     // MARK: - Computed Properties
 
@@ -59,6 +63,7 @@ class OSSMBLEManager: NSObject, ObservableObject {
     private var speedKnobConfigCharacteristic: CBCharacteristic?
     private var wifiCharacteristic: CBCharacteristic?
     private var currentStateCharacteristic: CBCharacteristic?
+    private var sessionStatsCharacteristic: CBCharacteristic?
     private var patternListCharacteristic: CBCharacteristic?
     private var patternDescriptionCharacteristic: CBCharacteristic?
     private var gpioCharacteristic: CBCharacteristic?
@@ -717,6 +722,17 @@ class OSSMBLEManager: NSObject, ObservableObject {
         }
     }
 
+    private func handleSessionStatsUpdateData(_ data: Data) {
+        if let sessionStats = OSSMSessionStats.fromJSON(data) {
+            runtimeData.update(sessionStats: sessionStats)
+        } else if let jsonString = String(data: data, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !jsonString.isEmpty,
+                  jsonString != "{}" {
+            print("[OSSM] Failed to parse session stats JSON: \(jsonString)")
+        }
+    }
+
     private func resolvePendingRead(_ result: Result<Data, Error>) {
         pendingReadTimeoutTask?.cancel()
         pendingReadTimeoutTask = nil
@@ -792,13 +808,16 @@ class OSSMBLEManager: NSObject, ObservableObject {
         speedKnobConfigCharacteristic = nil
         wifiCharacteristic = nil
         currentStateCharacteristic = nil
+        sessionStatsCharacteristic = nil
         patternListCharacteristic = nil
         patternDescriptionCharacteristic = nil
         gpioCharacteristic = nil
         patterns.removeAll()
         runtimeData.currentState = OSSMState()
+        runtimeData.currentSessionStats = nil
         currentRootState = .idle
         speedKnobAsLimit = true
+        supportsSessionStats = false
         homingForwardStartTime = nil
         homingBackwardStartTime = nil
         flushPendingCommandQueues(error: OSSMError.notReady)
@@ -865,6 +884,9 @@ extension OSSMBLEManager: CBCentralManagerDelegate {
         print("[OSSM] Disconnected from device")
         isReady = false
         connectionStatus = .disconnected
+        sessionStatsCharacteristic = nil
+        supportsSessionStats = false
+        runtimeData.currentSessionStats = nil
         initialSetupTask?.cancel()
         initialSetupTask = nil
         flushPendingCommandQueues(error: error ?? OSSMError.notReady)
@@ -907,6 +929,7 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                     OSSMConstants.speedKnobConfigCharacteristicUUID,
                     OSSMConstants.wifiCharacteristicUUID,
                     OSSMConstants.currentStateCharacteristicUUID,
+                    OSSMConstants.sessionStatsCharacteristicUUID,
                     OSSMConstants.patternListCharacteristicUUID,
                     OSSMConstants.patternDescriptionCharacteristicUUID,
                     OSSMConstants.gpioCharacteristicUUID
@@ -922,6 +945,12 @@ extension OSSMBLEManager: CBPeripheralDelegate {
         }
 
         guard let characteristics = service.characteristics else { return }
+
+        if service.uuid == OSSMConstants.primaryServiceUUID {
+            sessionStatsCharacteristic = nil
+            supportsSessionStats = false
+            runtimeData.currentSessionStats = nil
+        }
 
         for characteristic in characteristics {
             switch characteristic.uuid {
@@ -943,6 +972,12 @@ extension OSSMBLEManager: CBPeripheralDelegate {
                 print("[OSSM] Found state characteristic")
                 currentStateCharacteristic = characteristic
                 // Subscribe to state notifications
+                peripheral.setNotifyValue(true, for: characteristic)
+
+            case OSSMConstants.sessionStatsCharacteristicUUID:
+                print("[OSSM] Found session stats characteristic")
+                sessionStatsCharacteristic = characteristic
+                supportsSessionStats = true
                 peripheral.setNotifyValue(true, for: characteristic)
 
             case OSSMConstants.patternListCharacteristicUUID:
@@ -983,6 +1018,9 @@ extension OSSMBLEManager: CBPeripheralDelegate {
         switch characteristic.uuid {
         case OSSMConstants.currentStateCharacteristicUUID:
             handleStateUpdateData(data)
+
+        case OSSMConstants.sessionStatsCharacteristicUUID:
+            handleSessionStatsUpdateData(data)
 
         case OSSMConstants.speedKnobConfigCharacteristicUUID:
             handleSpeedKnobConfigData(data)

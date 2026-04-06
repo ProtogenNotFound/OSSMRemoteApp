@@ -16,7 +16,7 @@ struct OSSMRemoteAppApp: App {
             OSSMControlView()
                 .environmentObject(bleManager)
         }
-        .modelContainer(for: [StrokeEnginePreset.self])
+        .modelContainer(for: [StrokeEnginePreset.self, OSSMSessionStatsRecord.self])
         #if os(visionOS)
         .windowResizability(.contentMinSize)
         .defaultSize(width: 450, height: 600)

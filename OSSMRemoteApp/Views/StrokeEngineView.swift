@@ -31,6 +31,10 @@ struct StrokeEngineView: PlatformSplitView {
     @AppStorage("strokeEngine.settings.sensationStepAmount") var sensationStepAmountSetting = 5
     @AppStorage("strokeEngine.settings.sliderDebugLogging") var sliderDebugLogging = true
 
+    #if !os(visionOS)
+    let heroTransitionNamespace: Namespace.ID
+    #endif
+
     @State var speed: Double = 0
     @State var stroke: Double = 50
     @State var depth: Double = 50
@@ -120,6 +124,10 @@ struct StrokeEngineView: PlatformSplitView {
     #if !os(visionOS)
     var iosBody: some View {
         List {
+            StrokeEngineSessionStatsRow(
+                runtimeData: bleManager.runtimeData,
+                supportsSessionStats: bleManager.supportsSessionStats
+            )
             if showPresetsSection {
                 Section("Presets") {
                     HStack {
@@ -425,6 +433,7 @@ struct StrokeEngineView: PlatformSplitView {
         .monospacedDigit()
         .disabled(bleManager.currentPage != .strokeEngine)
         .navigationTitle("Stroke Engine")
+        .navigationTransition(.zoom(sourceID: "strokeEngineTitleZoom", in: heroTransitionNamespace))
         .onAppear {
             sanitizeStoredSettings()
             syncState()
@@ -452,14 +461,20 @@ struct StrokeEngineView: PlatformSplitView {
                     }
                 } else {
                     logSlider("Speed pending target \(pendingTarget) timed out; applying incoming \(state.speed)")
-                    speed = Double(state.speed)
+                    let incomingSpeed = Double(state.speed)
+                    if speed != incomingSpeed {
+                        speed = incomingSpeed
+                    }
                     clearPendingSpeedTarget()
                 }
             } else {
                 if let pendingTarget = pendingSpeedTarget, state.speed == pendingTarget {
                     logSlider("Speed matched pending target \(pendingTarget)")
                 }
-                speed = Double(state.speed)
+                let incomingSpeed = Double(state.speed)
+                if speed != incomingSpeed {
+                    speed = incomingSpeed
+                }
                 clearPendingSpeedTarget()
             }
         }
@@ -472,14 +487,20 @@ struct StrokeEngineView: PlatformSplitView {
                     }
                 } else {
                     logSlider("Stroke pending target \(pendingTarget) timed out; applying incoming \(state.stroke)")
-                    stroke = Double(state.stroke)
+                    let incomingStroke = Double(state.stroke)
+                    if stroke != incomingStroke {
+                        stroke = incomingStroke
+                    }
                     clearPendingStrokeTarget()
                 }
             } else {
                 if let pendingTarget = pendingStrokeTarget, state.stroke == pendingTarget {
                     logSlider("Stroke matched pending target \(pendingTarget)")
                 }
-                stroke = Double(state.stroke)
+                let incomingStroke = Double(state.stroke)
+                if stroke != incomingStroke {
+                    stroke = incomingStroke
+                }
                 clearPendingStrokeTarget()
             }
         }
@@ -492,14 +513,20 @@ struct StrokeEngineView: PlatformSplitView {
                     }
                 } else {
                     logSlider("Depth pending target \(pendingTarget) timed out; applying incoming \(state.depth)")
-                    depth = Double(state.depth)
+                    let incomingDepth = Double(state.depth)
+                    if depth != incomingDepth {
+                        depth = incomingDepth
+                    }
                     clearPendingDepthTarget()
                 }
             } else {
                 if let pendingTarget = pendingDepthTarget, state.depth == pendingTarget {
                     logSlider("Depth matched pending target \(pendingTarget)")
                 }
-                depth = Double(state.depth)
+                let incomingDepth = Double(state.depth)
+                if depth != incomingDepth {
+                    depth = incomingDepth
+                }
                 clearPendingDepthTarget()
             }
         }
@@ -512,14 +539,20 @@ struct StrokeEngineView: PlatformSplitView {
                     }
                 } else {
                     logSlider("Sensation pending target \(pendingTarget) timed out; applying incoming \(state.sensation)")
-                    sensation = Double(state.sensation)
+                    let incomingSensation = Double(state.sensation)
+                    if sensation != incomingSensation {
+                        sensation = incomingSensation
+                    }
                     clearPendingSensationTarget()
                 }
             } else {
                 if let pendingTarget = pendingSensationTarget, state.sensation == pendingTarget {
                     logSlider("Sensation matched pending target \(pendingTarget)")
                 }
-                sensation = Double(state.sensation)
+                let incomingSensation = Double(state.sensation)
+                if sensation != incomingSensation {
+                    sensation = incomingSensation
+                }
                 clearPendingSensationTarget()
             }
         }
@@ -715,6 +748,33 @@ struct StrokeEngineView: PlatformSplitView {
         max(settingsRange.lowerBound, min(settingsRange.upperBound, value))
     }
 
+    static func formatDistance(_ distanceM: Double) -> String {
+        distanceM.formatted(
+            .number
+                .precision(.fractionLength(1))
+        )
+    }
+
+    static func formatElapsedTime(_ elapsedMs: Int) -> String {
+        let totalSeconds = max(0, elapsedMs / 1000)
+        let hours = totalSeconds / 3600
+        let minutes = (totalSeconds % 3600) / 60
+        let seconds = totalSeconds % 60
+
+        if hours > 0 {
+            if minutes > 0 {
+                return "\(hours)h\(minutes)m\(seconds)s"
+            }
+            return "\(hours)h\(seconds)s"
+        }
+
+        if minutes > 0 {
+            return "\(minutes)m\(seconds)s"
+        }
+
+        return "\(seconds)s"
+    }
+
     func clampedSettingsBinding(for binding: Binding<Int>) -> Binding<Int> {
         Binding(
             get: {
@@ -769,6 +829,25 @@ struct StrokeEngineView: PlatformSplitView {
         case presetLoad = "preset"
     }
 }
+
+#if !os(visionOS)
+private struct StrokeEngineSessionStatsRow: View {
+    @ObservedObject var runtimeData: OSSMRuntimeData
+    let supportsSessionStats: Bool
+
+    var body: some View {
+        if supportsSessionStats,
+           runtimeData.currentState.state.rawValue.contains(OSSMPage.strokeEngine.rawValue),
+           let stats = runtimeData.currentSessionStats {
+            HStack {
+                Text(stats.strokes.formatted())
+                Text(StrokeEngineView.formatElapsedTime(stats.elapsedMs))
+                Text(StrokeEngineView.formatDistance(stats.distanceM))
+            }
+        }
+    }
+}
+#endif
 
 struct StrokeEngineSettingsView: PlatformSplitView {
     @Binding var showPresetsSection: Bool

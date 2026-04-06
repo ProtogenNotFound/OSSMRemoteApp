@@ -7,13 +7,17 @@
 
 import SwiftUI
 import CoreBluetooth
+import SwiftData
 
 struct OSSMControlView: PlatformSplitView {
     @AppStorage("homingForwardTime") var homingForwardTime: Double?
     @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
     @AppStorage("savedUUID") var savedUUID: String?
+    @AppStorage("debug.sessionData.persist") var persistDebugSessionData = false
+    @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var bleManager: OSSMBLEManager
     @State var path: [OSSMPage] = []
+    @State var showSettings: Bool = false
     @State var showError: Bool = false
     @State var errorMessage: String = ""
 
@@ -24,11 +28,37 @@ struct OSSMControlView: PlatformSplitView {
     @State var homingPulse = false
     @State var homingPulseTask: Task<Void, Never>? = nil
 
+    #if !os(visionOS)
+    @Namespace private var strokeEngineTransition
+    #endif
+
     func resetAppStorage() {
         // Remove saved device so we don't auto-reconnect
         savedUUID = nil
         homingBackwardTime = nil
         homingForwardTime = nil
+    }
+
+    func persistSessionStats(_ sessionStats: OSSMSessionStats) {
+        if bleManager.isDebugMode && !persistDebugSessionData {
+            return
+        }
+
+        let sessionId = sessionStats.sessionId
+        var descriptor = FetchDescriptor<OSSMSessionStatsRecord>(
+            predicate: #Predicate { $0.sessionId == sessionId }
+        )
+        descriptor.fetchLimit = 1
+
+        do {
+            if let existingRecord = try modelContext.fetch(descriptor).first {
+                existingRecord.update(from: sessionStats)
+            } else {
+                modelContext.insert(OSSMSessionStatsRecord(sessionStats: sessionStats))
+            }
+        } catch {
+            print("[OSSM] Failed to persist session stats for sessionId \(sessionId): \(error)")
+        }
     }
 
     @ToolbarContentBuilder
@@ -47,23 +77,15 @@ struct OSSMControlView: PlatformSplitView {
             Section("Device Status") {
                 Text(bleManager.currentRootState.rawValue)
             }
-            Button("Disconnect", role: .destructive) {
-                bleManager.disconnect()
-                resetAppStorage()
-                // Start scanning for new devices
-                bleManager.startScanning()
-            }.disabled(bleManager.connectionStatus != .connected)
-            Button("Debug Mode") {
-                if bleManager.isDebugMode {
-                    bleManager.disableDebugMode()
-                } else {
-                    bleManager.enableDebugMode()
-                }
-            }
         } label: {
-            Circle()
-                .fill(statusColor)
-                .frame(width: 8, height: 8)
+            if !bleManager.isDebugMode {
+                Circle()
+                    .fill(statusColor)
+                    .frame(width: 8, height: 8)
+            } else {
+                Image(systemName: "ladybug")
+                    .foregroundStyle(statusColor)
+            }
         }
     }
 
@@ -72,7 +94,7 @@ struct OSSMControlView: PlatformSplitView {
         NavigationStack (path: $path){
             Group {
                 if bleManager.connectionStatus == .ready {
-                    MenuView()
+                    MenuView(heroTransitionNamespace: strokeEngineTransition)
                         .sheet(isPresented: .constant(bleManager.homing)) {
                             HomingSheetView(
                                 forward: bleManager.currentRootState.rawValue.contains("forward"),
@@ -94,7 +116,7 @@ struct OSSMControlView: PlatformSplitView {
             .navigationDestination(for: OSSMPage.self) { page in
                 switch page {
                 case .menu:
-                    MenuView()
+                    MenuView(heroTransitionNamespace: strokeEngineTransition)
                         .toolbar {
                             toolbarMenu
                         }
@@ -104,21 +126,31 @@ struct OSSMControlView: PlatformSplitView {
                             toolbarMenu
                         }
                 case .strokeEngine:
-                    StrokeEngineView()
+                    StrokeEngineView(heroTransitionNamespace: strokeEngineTransition)
                         .toolbar {
                             toolbarMenu
                         }
                 case .streaming:
-                    StreamingView()
+                    StreamingView(heroTransitionNamespace: strokeEngineTransition)
                     .toolbar {
                         toolbarMenu
                     }
                 }
             }
             .toolbar {
-                toolbarMenu
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    statusMenu
+                    Button("Settings", systemImage: "gear") {
+                        showSettings.toggle()
+                    }
+                    .labelStyle(.iconOnly)
+                }
             }
             .navigationTitle("OSSM Control")
+        }
+        .sheet(isPresented: $showSettings) {
+            settingsSheet
+                .presentationDetents([.large])
         }
         .onChange(of: path, { _, newPath in
             let target = newPath.last ?? .menu
@@ -145,8 +177,62 @@ struct OSSMControlView: PlatformSplitView {
                 bleManager.navigateTo(.menu)
             }
         }
+        .onReceive(bleManager.runtimeData.$currentSessionStats) { sessionStats in
+            guard let sessionStats else { return }
+            persistSessionStats(sessionStats)
+        }
     }
     #endif
+
+    // MARK: - Settings Sheet (shared across platforms)
+
+    var settingsSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Connectivity"){
+                    Button("Disconnect", role: .destructive) {
+                        bleManager.disconnect()
+                        resetAppStorage()
+                        // Start scanning for new devices
+                        bleManager.startScanning()
+                    }.disabled(bleManager.connectionStatus != .connected)
+                }
+                Section("Debug Mode"){
+                    Button {
+                        withAnimation(.spring) {
+                            if !bleManager.isDebugMode {
+                                bleManager.enableDebugMode()
+                            } else {
+                                bleManager.disableDebugMode()
+                            }
+                        }
+                    } label: {
+                        Text(bleManager.isDebugMode ? "Disable" : "Enable")
+                    }
+                    let liveDataBinding = Binding<Bool> {
+                        bleManager.debugSessionSimulator.isEnabled
+                    } set: {
+                        bleManager.setDebugSessionSimulationEnabled($0)
+                    }
+                    Toggle("Simulate live session data", isOn: liveDataBinding)
+                    Toggle("Persist simulated session data", isOn: $persistDebugSessionData)
+                    let spsBinding = Binding<Double> {
+                        bleManager.debugSessionSimulator.strokesPerSecond
+                    } set: {
+                        bleManager.debugSessionSimulator.strokesPerSecond = $0
+                    }
+                    let cmsBinding = Binding<Double> {
+                        bleManager.debugSessionSimulator.distancePerSecondCm
+                    } set: {
+                        bleManager.debugSessionSimulator.distancePerSecondCm = $0
+                    }
+                    Stepper("Simulated Strokes/sec: \(spsBinding.wrappedValue, specifier: "%.1f")", value: spsBinding, step: 0.5)
+                    Stepper("Simulated Distance/sec: \(Int(cmsBinding.wrappedValue))cm", value: cmsBinding, step: 10)
+                }
+            }
+            .navigationTitle("Settings")
+        }
+    }
 
     // MARK: - Subviews
 

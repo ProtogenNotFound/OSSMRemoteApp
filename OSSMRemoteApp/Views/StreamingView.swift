@@ -43,6 +43,10 @@ struct StreamingView: PlatformSplitView {
     @State var depth = 0.0
     @State var stroke = 0.0
 
+    #if !os(visionOS)
+    let heroTransitionNamespace: Namespace.ID
+    #endif
+
 
     #if !os(visionOS)
     var iosBody: some View {
@@ -211,6 +215,8 @@ struct StreamingView: PlatformSplitView {
                 stopStreamingLoop()
                 playing = false
             }
+            .navigationTitle("Streaming")
+            .navigationTransition(.zoom(sourceID: "streamingTitleZoom", in: heroTransitionNamespace))
     }
     #endif
 
@@ -370,7 +376,3 @@ struct StreamingView: PlatformSplitView {
     }
 }
 
-
-#Preview {
-    StreamingView()
-}

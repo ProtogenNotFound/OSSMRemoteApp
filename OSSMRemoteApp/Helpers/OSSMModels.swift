@@ -9,6 +9,7 @@ import Foundation
 import CoreBluetooth
 import SwiftUI
 import Combine
+import SwiftData
 
 // MARK: - OSSM Data Types
 
@@ -182,6 +183,59 @@ struct OSSMState: Equatable {
     }
 }
 
+/// Represents strokeEngine session telemetry broadcast by newer firmware.
+struct OSSMSessionStats: Equatable {
+    var sessionId: String
+    var elapsedMs: Int
+    var strokes: Int
+    var distanceM: Double
+
+    var elapsedSeconds: TimeInterval {
+        TimeInterval(elapsedMs) / 1000
+    }
+
+    /// Parse from JSON data received from firmware
+    static func fromJSON(_ data: Data) -> OSSMSessionStats? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let sessionId = json["sessionId"] as? String,
+              let elapsedMs = json["elapsedMs"] as? NSNumber,
+              let strokes = json["strokes"] as? NSNumber,
+              let distanceM = json["distanceM"] as? NSNumber else {
+            return nil
+        }
+
+        return OSSMSessionStats(
+            sessionId: sessionId,
+            elapsedMs: elapsedMs.intValue,
+            strokes: strokes.intValue,
+            distanceM: distanceM.doubleValue
+        )
+    }
+}
+
+@Model
+final class OSSMSessionStatsRecord {
+    @Attribute(.unique) var sessionId: String = Foundation.UUID().uuidString
+    var startDate: Date = Foundation.Date.now
+    var elapsedMs: Int = 0
+    var strokes: Int = 0
+    var distanceM: Double = 0
+
+    init(sessionStats: OSSMSessionStats) {
+        self.sessionId = sessionStats.sessionId
+        self.startDate = .now.addingTimeInterval(-max(0, sessionStats.elapsedSeconds))
+        self.elapsedMs = sessionStats.elapsedMs
+        self.strokes = sessionStats.strokes
+        self.distanceM = sessionStats.distanceM
+    }
+
+    func update(from sessionStats: OSSMSessionStats) {
+        elapsedMs = sessionStats.elapsedMs
+        strokes = sessionStats.strokes
+        distanceM = sessionStats.distanceM
+    }
+}
+
 /// Data structure for running stroke engine patterns
 struct OSSMPlayData {
     var speed: Int
@@ -204,6 +258,7 @@ enum OSSMConstants {
     static let speedKnobConfigCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-1010-420badbabe69")
     static let wifiCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-1020-420badbabe69")
     static let currentStateCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-2000-420badbabe69")
+    static let sessionStatsCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-2010-420badbabe69")
     static let patternListCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-3000-420badbabe69")
     static let patternDescriptionCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-3010-420badbabe69")
     static let gpioCharacteristicUUID = CBUUID(string: "522b443a-4f53-534d-4000-420badbabe69")
@@ -246,12 +301,19 @@ enum OSSMError: LocalizedError {
 /// Container for high-frequency updates that doesn't trigger the main BLEManager to publish changes
 class OSSMRuntimeData: ObservableObject {
     @Published var currentState: OSSMState = OSSMState()
+    @Published var currentSessionStats: OSSMSessionStats?
 
     func update(with newState: OSSMState) {
         // Only publish if something actually changed to be safe,
         // though SwiftUI handles this well usually.
         if currentState != newState {
             currentState = newState
+        }
+    }
+
+    func update(sessionStats newSessionStats: OSSMSessionStats?) {
+        if currentSessionStats != newSessionStats {
+            currentSessionStats = newSessionStats
         }
     }
 }

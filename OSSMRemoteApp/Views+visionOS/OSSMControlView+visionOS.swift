@@ -9,8 +9,15 @@ import CoreBluetooth
 #if os(visionOS)
 extension OSSMControlView {
     var visionOSStatusMenu: some View {
-        statusMenu
-            .glassBackgroundEffect()
+        HStack(spacing: 12) {
+            statusMenu
+            Button("Settings", systemImage: "gear") {
+                showSettings.toggle()
+            }
+            .labelStyle(.iconOnly)
+        }
+        .padding(12)
+        .glassBackgroundEffect()
     }
     var visionBody: some View {
         NavigationStack (path: $path){
@@ -62,6 +69,9 @@ extension OSSMControlView {
             .navigationTitle("OSSM Control")
         }
         .frame(minWidth: 510, minHeight: 680)
+        .sheet(isPresented: $showSettings) {
+            settingsSheet
+        }
         .onChange(of: path, { _, newPath in
             let target = newPath.last ?? .menu
             bleManager.navigateTo(target)
@@ -85,6 +95,10 @@ extension OSSMControlView {
                 path = []
                 bleManager.navigateTo(.menu)
             }
+        }
+        .onReceive(bleManager.runtimeData.$currentSessionStats) { sessionStats in
+            guard let sessionStats else { return }
+            persistSessionStats(sessionStats)
         }
     }
 
