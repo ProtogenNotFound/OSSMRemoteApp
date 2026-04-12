@@ -49,17 +49,17 @@ extension OSSMControlView {
                 case .simplePenetration:
                     SimplePenetrationView()
                         .ornament(attachmentAnchor: .scene(.topTrailing)) {
-                            visionOSStatusMenu
+                            statusMenu
                     }
                 case .strokeEngine:
                     StrokeEngineView()
                         .ornament(attachmentAnchor: .scene(.topTrailing)) {
-                            visionOSStatusMenu
+                            statusMenu
                         }
                 case .streaming:
                     StreamingView()
                         .ornament(attachmentAnchor: .scene(.topTrailing)) {
-                            visionOSStatusMenu
+                            statusMenu
                         }
                 }
             }

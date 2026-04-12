@@ -8,14 +8,34 @@ import Observation
 
 // MARK: - Debug Session Simulator
 
+private enum DebugSessionSimulatorDefaults {
+    static let isEnabledKey = "debugSessionSimulator.isEnabled"
+    static let strokesPerSecondKey = "debugSessionSimulator.strokesPerSecond"
+    static let distancePerSecondCmKey = "debugSessionSimulator.distancePerSecondCm"
+    static let defaultStrokesPerSecond = 1.5
+    static let defaultDistancePerSecondCm = 30.0
+}
+
 /// Simulates session telemetry (strokes, distance, elapsed time) for debug mode.
 /// Mirrors the firmware behaviour where a new session starts each time the
 /// strokeEngine page is entered.
 @Observable
 class DebugSessionSimulator {
-    var isEnabled: Bool = false
-    var strokesPerSecond: Double = 1.5
-    var distancePerSecondCm: Double = 30.0
+    var isEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(isEnabled, forKey: DebugSessionSimulatorDefaults.isEnabledKey)
+        }
+    }
+    var strokesPerSecond: Double {
+        didSet {
+            UserDefaults.standard.set(strokesPerSecond, forKey: DebugSessionSimulatorDefaults.strokesPerSecondKey)
+        }
+    }
+    var distancePerSecondCm: Double {
+        didSet {
+            UserDefaults.standard.set(distancePerSecondCm, forKey: DebugSessionSimulatorDefaults.distancePerSecondCmKey)
+        }
+    }
 
     private(set) var isRunning: Bool = false
 
@@ -28,6 +48,12 @@ class DebugSessionSimulator {
 
     init(runtimeData: OSSMRuntimeData) {
         self.runtimeData = runtimeData
+        let defaults = UserDefaults.standard
+        isEnabled = defaults.bool(forKey: DebugSessionSimulatorDefaults.isEnabledKey)
+        strokesPerSecond = defaults.object(forKey: DebugSessionSimulatorDefaults.strokesPerSecondKey) as? Double
+            ?? DebugSessionSimulatorDefaults.defaultStrokesPerSecond
+        distancePerSecondCm = defaults.object(forKey: DebugSessionSimulatorDefaults.distancePerSecondCmKey) as? Double
+            ?? DebugSessionSimulatorDefaults.defaultDistancePerSecondCm
     }
 
     /// Start a brand-new session, cancelling any existing one first.

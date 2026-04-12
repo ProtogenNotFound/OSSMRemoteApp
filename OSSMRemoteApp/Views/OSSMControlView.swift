@@ -14,6 +14,7 @@ struct OSSMControlView: PlatformSplitView {
     @AppStorage("homingBackwardTime") var homingBackwardTime: Double?
     @AppStorage("savedUUID") var savedUUID: String?
     @AppStorage("debug.sessionData.persist") var persistDebugSessionData = false
+    @AppStorage("strokeEngine.settings.saveLiveSessionData") var saveLiveSessionData = true
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var bleManager: OSSMBLEManager
     @State var path: [OSSMPage] = []
@@ -40,6 +41,8 @@ struct OSSMControlView: PlatformSplitView {
     }
 
     func persistSessionStats(_ sessionStats: OSSMSessionStats) {
+        guard saveLiveSessionData else { return }
+
         if bleManager.isDebugMode && !persistDebugSessionData {
             return
         }

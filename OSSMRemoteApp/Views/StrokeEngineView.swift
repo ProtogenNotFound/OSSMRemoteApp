@@ -25,6 +25,8 @@ struct StrokeEngineView: PlatformSplitView {
     @AppStorage("strokeEngine.settings.showPresetsSection") var showPresetsSection = true
     @AppStorage("strokeEngine.settings.highSpeedWarningEnabled") var highSpeedWarningEnabled = true
     @AppStorage("strokeEngine.settings.highSpeedWarningThreshold") var highSpeedWarningThresholdSetting = 20
+    @AppStorage("strokeEngine.settings.showLiveSessionData") var showLiveSessionData = true
+    @AppStorage("strokeEngine.settings.saveLiveSessionData") var saveLiveSessionData = true
     @AppStorage("strokeEngine.settings.speedStepAmount") var speedStepAmountSetting = 5
     @AppStorage("strokeEngine.settings.strokeStepAmount") var strokeStepAmountSetting = 5
     @AppStorage("strokeEngine.settings.depthStepAmount") var depthStepAmountSetting = 5
@@ -105,10 +107,12 @@ struct StrokeEngineView: PlatformSplitView {
     #if !os(visionOS)
     var iosBody: some View {
         List {
-            StrokeEngineSessionStatsRow(
-                runtimeData: bleManager.runtimeData,
-                supportsSessionStats: bleManager.supportsSessionStats
-            )
+            if showLiveSessionData {
+                StrokeEngineSessionStatsRow(
+                    runtimeData: bleManager.runtimeData,
+                    supportsSessionStats: bleManager.supportsSessionStats
+                )
+            }
             if showPresetsSection {
                 Section("Presets") {
                     HStack {
@@ -333,6 +337,8 @@ struct StrokeEngineView: PlatformSplitView {
                 showPresetsSection: $showPresetsSection,
                 highSpeedWarningEnabled: $highSpeedWarningEnabled,
                 highSpeedWarningThreshold: clampedSettingsBinding(for: $highSpeedWarningThresholdSetting),
+                showLiveSessionData: $showLiveSessionData,
+                saveLiveSessionData: $saveLiveSessionData,
                 speedStepAmount: clampedSettingsBinding(for: $speedStepAmountSetting),
                 strokeStepAmount: clampedSettingsBinding(for: $strokeStepAmountSetting),
                 depthStepAmount: clampedSettingsBinding(for: $depthStepAmountSetting),
@@ -565,6 +571,271 @@ struct StrokeEngineView: PlatformSplitView {
 }
 
 #if !os(visionOS)
+
+
+private struct RollingCounterView: View {
+    var font: Font = .largeTitle
+    var weight: Font.Weight = .regular
+    @Binding var value: Double
+
+    @State private var lastRenderedValue: Double?
+
+    private var sanitizedValue: Double {
+        guard value.isFinite else { return 0 }
+        return max(0, value)
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Self.decimalPlaces(for: sanitizedValue), id: \.self) { place in
+                CounterDigitWheel(
+                    font: font,
+                    weight: weight,
+                    digitCount: 10,
+                    initialPosition: Self.wheelPosition(for: lastRenderedValue ?? sanitizedValue, place: place),
+                    targetPosition: Self.wheelPosition(for: sanitizedValue, place: place)
+                )
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(sanitizedValue.formatted()))
+        .onAppear {
+            lastRenderedValue = sanitizedValue
+        }
+        .onChange(of: value) { _, _ in
+            lastRenderedValue = sanitizedValue
+        }
+    }
+
+    private static func decimalPlaces(for value: Double) -> [Int] {
+        let wholeValue = Int(min(Double(Int.max), max(0, value.rounded(.up))))
+        var places = [1]
+        var place = 10
+
+        while wholeValue >= place {
+            places.insert(place, at: 0)
+
+            guard place <= Int.max / 10 else { break }
+            place *= 10
+        }
+
+        return places
+    }
+
+    private static func wheelPosition(for value: Double, place: Int) -> Double {
+        let sanitizedValue = value.isFinite ? max(0, value) : 0
+        let lowerValue = sanitizedValue.rounded(.down)
+        let upperValue = sanitizedValue.rounded(.up)
+        let progress = sanitizedValue - lowerValue
+        let placeValue = Double(place)
+        let lowerPosition = (lowerValue / placeValue).rounded(.down)
+        let upperPosition = (upperValue / placeValue).rounded(.down)
+
+        return lowerPosition + ((upperPosition - lowerPosition) * progress)
+    }
+}
+
+private struct CounterDigitWheel: View {
+    let font: Font
+    let weight: Font.Weight
+    let digitCount: Int
+    let initialPosition: Double
+    let targetPosition: Double
+
+    @State private var displayedPosition: Double?
+
+    private let animation = Animation.interactiveSpring(
+        response: 0.8,
+        dampingFraction: 1,
+        blendDuration: 0.25
+    )
+
+    var body: some View {
+        CounterDigitWheelFace(
+            font: font,
+            weight: weight,
+            digitCount: digitCount,
+            position: displayedPosition ?? initialPosition
+        )
+        .onAppear {
+            guard displayedPosition == nil else { return }
+
+            displayedPosition = initialPosition
+
+            guard initialPosition != targetPosition else { return }
+
+            DispatchQueue.main.async {
+                withAnimation(animation) {
+                    displayedPosition = targetPosition
+                }
+            }
+        }
+        .onChange(of: targetPosition) { _, newPosition in
+            withAnimation(animation) {
+                displayedPosition = newPosition
+            }
+        }
+    }
+}
+
+private struct CounterDigitWheelFace: View, Animatable {
+    let font: Font
+    let weight: Font.Weight
+    let digitCount: Int
+    var position: Double
+
+    var animatableData: Double {
+        get { position }
+        set { position = newValue }
+    }
+
+    var body: some View {
+        Text("8")
+            .font(font)
+            .fontWeight(weight)
+            .opacity(0)
+            .overlay {
+                GeometryReader { proxy in
+                    let size = proxy.size
+                    let basePosition = floor(position)
+                    let offset = position - basePosition
+
+                    VStack(spacing: 0) {
+                        ForEach(-1...1, id: \.self) { relativePosition in
+                            Text("\(Self.digit(for: Int(basePosition) + relativePosition, digitCount: digitCount))")
+                                .font(font)
+                                .fontWeight(weight)
+                                .frame(width: size.width, height: size.height, alignment: .center)
+                        }
+                    }
+                    .offset(y: -CGFloat(offset + 1) * size.height)
+                }
+                .clipped()
+            }
+    }
+
+    private static func digit(for position: Int, digitCount: Int) -> Int {
+        let count = max(1, digitCount)
+        let digit = position % count
+        return digit >= 0 ? digit : digit + count
+    }
+}
+
+private struct RollingTimeCounterView: View {
+    var font: Font = .headline.monospacedDigit()
+    var weight: Font.Weight = .semibold
+    @Binding var elapsedMs: Double
+
+    @State private var lastRenderedElapsedSeconds: Double?
+
+    private var elapsedSeconds: Double {
+        guard elapsedMs.isFinite else { return 0 }
+        return max(0, elapsedMs / 1000)
+    }
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 1) {
+            HStack(spacing: 0) {
+                ForEach(Self.minutePlaces(for: elapsedSeconds), id: \.self) { place in
+                    CounterDigitWheel(
+                        font: font,
+                        weight: weight,
+                        digitCount: 10,
+                        initialPosition: Self.minuteWheelPosition(
+                            for: lastRenderedElapsedSeconds ?? elapsedSeconds,
+                            place: place
+                        ),
+                        targetPosition: Self.minuteWheelPosition(for: elapsedSeconds, place: place)
+                    )
+                }
+            }
+
+            Text(":")
+                .font(font)
+                .fontWeight(weight)
+
+            HStack(spacing: 0) {
+                CounterDigitWheel(
+                    font: font,
+                    weight: weight,
+                    digitCount: 6,
+                    initialPosition: Self.secondsWheelPosition(
+                        for: lastRenderedElapsedSeconds ?? elapsedSeconds,
+                        place: 10
+                    ),
+                    targetPosition: Self.secondsWheelPosition(for: elapsedSeconds, place: 10)
+                )
+
+                CounterDigitWheel(
+                    font: font,
+                    weight: weight,
+                    digitCount: 10,
+                    initialPosition: Self.secondsWheelPosition(
+                        for: lastRenderedElapsedSeconds ?? elapsedSeconds,
+                        place: 1
+                    ),
+                    targetPosition: Self.secondsWheelPosition(for: elapsedSeconds, place: 1)
+                )
+            }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(Text(Self.accessibilityTime(for: elapsedSeconds)))
+        .onAppear {
+            lastRenderedElapsedSeconds = elapsedSeconds
+        }
+        .onChange(of: elapsedMs) { _, _ in
+            lastRenderedElapsedSeconds = elapsedSeconds
+        }
+    }
+
+    private static func minutePlaces(for elapsedSeconds: Double) -> [Int] {
+        let upperMinutes = Int(
+            min(
+                Double(Int.max),
+                max(0, elapsedSeconds.rounded(.up) / 60).rounded(.down)
+            )
+        )
+        var places = [1]
+        var place = 10
+
+        while upperMinutes >= place {
+            places.insert(place, at: 0)
+
+            guard place <= Int.max / 10 else { break }
+            place *= 10
+        }
+
+        return places
+    }
+
+    private static func minuteWheelPosition(for elapsedSeconds: Double, place: Int) -> Double {
+        wheelPosition(for: elapsedSeconds, every: Double(place) * 60)
+    }
+
+    private static func secondsWheelPosition(for elapsedSeconds: Double, place: Int) -> Double {
+        wheelPosition(for: elapsedSeconds, every: Double(place))
+    }
+
+    private static func wheelPosition(for elapsedSeconds: Double, every interval: Double) -> Double {
+        let sanitizedSeconds = elapsedSeconds.isFinite ? max(0, elapsedSeconds) : 0
+        let lowerSeconds = sanitizedSeconds.rounded(.down)
+        let upperSeconds = sanitizedSeconds.rounded(.up)
+        let progress = sanitizedSeconds - lowerSeconds
+        let lowerPosition = (lowerSeconds / interval).rounded(.down)
+        let upperPosition = (upperSeconds / interval).rounded(.down)
+
+        return lowerPosition + ((upperPosition - lowerPosition) * progress)
+    }
+
+    private static func accessibilityTime(for elapsedSeconds: Double) -> String {
+        let roundedSeconds = Int(max(0, elapsedSeconds.rounded()))
+        let minutes = roundedSeconds / 60
+        let seconds = roundedSeconds % 60
+
+        return "\(minutes):\(String(format: "%02d", seconds))"
+    }
+}
+
 private struct StrokeEngineSessionStatsRow: View {
     @ObservedObject var runtimeData: OSSMRuntimeData
     let supportsSessionStats: Bool
@@ -573,12 +844,114 @@ private struct StrokeEngineSessionStatsRow: View {
         if supportsSessionStats,
            runtimeData.currentState.state.rawValue.contains(OSSMPage.strokeEngine.rawValue),
            let stats = runtimeData.currentSessionStats {
-            HStack {
-                Text(stats.strokes.formatted())
-                Text(StrokeEngineView.formatElapsedTime(stats.elapsedMs))
-                Text(StrokeEngineView.formatDistance(stats.distanceM))
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "waveform.path.ecg")
+                    .font(.title3)
+                    .foregroundStyle(.tint)
+                    .frame(width: 28)
+                let strokesBinding = Binding<Double>(
+                    get: { Double(stats.strokes) },
+                    set: { _ in }
+                )
+                rollingCounterMetric(value: strokesBinding, name: "strokes")
+                let distanceBinding = Binding<Double>(
+                    get: { stats.distanceM },
+                    set: { _ in }
+                )
+                rollingCounterMetric(value: distanceBinding, unit: "m", name: "distance")
+                let elapsedMsBinding = Binding<Double>(
+                    get: { Double(stats.elapsedMs) },
+                    set: { _ in }
+                )
+                rollingTimeMetric(elapsedMs: elapsedMsBinding)
+                Spacer()
+                    .frame(width: 28)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .id(stats.sessionId)
+            .animation(.linear(duration: 1), value: stats.strokes)
+            .animation(.linear(duration: 1), value: stats.elapsedMs)
+            .animation(.linear(duration: 1), value: stats.distanceM)
         }
+    }
+
+
+    private func rollingCounterMetric(value: Binding<Double>, unit: String? = nil, name: String) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                RollingCounterView(
+                    font: .headline.monospacedDigit(),
+                    weight: .semibold,
+                    value: value
+                )
+
+                if let unit{
+                    Text(unit)
+                        .font(.headline.weight(.semibold).monospacedDigit())
+                }
+            }
+            .foregroundStyle(.primary)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+
+            Text(name)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    private func rollingTimeMetric(elapsedMs: Binding<Double>) -> some View {
+        VStack(alignment: .trailing, spacing: 2) {
+            RollingTimeCounterView(elapsedMs: elapsedMs)
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text("time")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    nonisolated private static func formatStrokes(_ strokes: Double) -> String {
+        strokes.formatted(
+            .number
+                .precision(.fractionLength(0))
+        )
+    }
+
+    nonisolated private static func formatElapsedTime(_ elapsedMs: Double) -> String {
+        let seconds = max(0, elapsedMs / 1000)
+        let minutes = Int(seconds / 60)
+        let secondsRemainder = seconds - Double(minutes * 60)
+
+        if minutes > 0 {
+            return "\(minutes)m \(secondsRemainder.formatted(.number.precision(.fractionLength(0))))s"
+        }
+
+        return "\(seconds.formatted(.number.precision(.fractionLength(0))))s"
+    }
+
+    nonisolated private static func formatDistance(_ distanceM: Double) -> String {
+        "\(distanceM.formatted(.number.precision(.fractionLength(1)))) m"
+    }
+}
+
+private struct StrokeEngineAnimatedValueText: View, Animatable {
+    var value: Double
+    let formatter: (Double) -> String
+
+    var animatableData: Double {
+        get { value }
+        set { value = newValue }
+    }
+
+    var body: some View {
+        Text(formatter(value))
+            .contentTransition(.numericText(countsDown: true))
     }
 }
 #endif
@@ -587,6 +960,10 @@ struct StrokeEngineSettingsView: PlatformSplitView {
     @Binding var showPresetsSection: Bool
     @Binding var highSpeedWarningEnabled: Bool
     @Binding var highSpeedWarningThreshold: Int
+
+    @Binding var showLiveSessionData: Bool
+    @Binding var saveLiveSessionData: Bool
+
     @Binding var speedStepAmount: Int
     @Binding var strokeStepAmount: Int
     @Binding var depthStepAmount: Int
@@ -638,6 +1015,11 @@ struct StrokeEngineSettingsView: PlatformSplitView {
                         }
                     }
                     .animation(.spring, value: highSpeedWarningEnabled)
+                }
+
+                Section("Live Session Data") {
+                    Toggle("Show Live Session Data", isOn: $showLiveSessionData)
+                    Toggle("Save Live Session Data", isOn: $saveLiveSessionData)
                 }
 
                 Section("Button Step Ammount") {
