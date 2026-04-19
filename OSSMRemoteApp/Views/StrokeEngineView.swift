@@ -19,7 +19,8 @@ struct StrokeEngineView: PlatformSplitView {
     @State var presetErrorMessage = ""
     @State var showHighSpeedPresetWarning = false
     @State var pendingPresetActivationID: UUID?
-    @State var showSettings = false
+    @State private var localSettingsPresented = false
+    private let externalSettingsPresented: Binding<Bool>?
 
     @EnvironmentObject var bleManager: OSSMBLEManager
     @AppStorage("strokeEngine.settings.showPresetsSection") var showPresetsSection = true
@@ -35,6 +36,17 @@ struct StrokeEngineView: PlatformSplitView {
 
     #if !os(visionOS)
     let heroTransitionNamespace: Namespace.ID
+    #endif
+
+    #if os(visionOS)
+    init(showSettings: Binding<Bool>? = nil) {
+        self.externalSettingsPresented = showSettings
+    }
+    #else
+    init(heroTransitionNamespace: Namespace.ID, showSettings: Binding<Bool>? = nil) {
+        self.heroTransitionNamespace = heroTransitionNamespace
+        self.externalSettingsPresented = showSettings
+    }
     #endif
 
     @StateObject var controls = StrokeEngineControlViewModel()
@@ -93,6 +105,10 @@ struct StrokeEngineView: PlatformSplitView {
     var pendingPresetActivation: StrokeEnginePreset? {
         guard let pendingPresetActivationID else { return nil }
         return presets.first(where: { $0.id == pendingPresetActivationID })
+    }
+
+    var settingsPresented: Binding<Bool> {
+        externalSettingsPresented ?? $localSettingsPresented
     }
 
     var suggestedPresetName: String {
@@ -306,7 +322,7 @@ struct StrokeEngineView: PlatformSplitView {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Settings", systemImage: "slider.horizontal.3"){
-                    showSettings = true
+                    settingsPresented.wrappedValue = true
                 }
             }
             ToolbarItemGroup(placement: .bottomBar) {
@@ -332,7 +348,7 @@ struct StrokeEngineView: PlatformSplitView {
 
             }
         }
-        .sheet(isPresented: $showSettings) {
+        .sheet(isPresented: settingsPresented) {
             StrokeEngineSettingsView(
                 showPresetsSection: $showPresetsSection,
                 highSpeedWarningEnabled: $highSpeedWarningEnabled,

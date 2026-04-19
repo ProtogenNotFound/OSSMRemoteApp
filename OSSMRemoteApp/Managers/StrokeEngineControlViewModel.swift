@@ -15,15 +15,9 @@ final class StrokeEngineControlViewModel: ObservableObject {
 
     private weak var bleManager: OSSMBLEManager?
     private var observedState = OSSMPlayData()
-    private var pendingConfirmations: [StrokeEngineParameter: PendingConfirmation] = [:]
+    private var locallyControlledParameters: Set<StrokeEngineParameter> = []
+    private var acceptedCommandValues: [StrokeEngineParameter: Int] = [:]
     private var syncTask: Task<Void, Never>?
-
-    private let confirmationTimeout: TimeInterval = 3.0
-
-    private struct PendingConfirmation {
-        let value: Int
-        let sentAt: Date
-    }
 
     func bind(to bleManager: OSSMBLEManager) {
         self.bleManager = bleManager
@@ -38,12 +32,11 @@ final class StrokeEngineControlViewModel: ObservableObject {
         let previousObservedState = observedState
 
         observedState = incomingState
-        pruneExpiredPendingConfirmations()
-        clearConfirmedPendingConfirmations(using: incomingState)
 
         if preferDeviceState {
             desiredState = incomingState
-            pendingConfirmations.removeAll()
+            locallyControlledParameters.removeAll()
+            acceptedCommandValues.removeAll()
             lastError = nil
         } else {
             desiredState = mergeDesiredState(
@@ -64,6 +57,8 @@ final class StrokeEngineControlViewModel: ObservableObject {
         guard desiredState.value(for: parameter) != clampedValue else { return }
 
         desiredState.setValue(clampedValue, for: parameter)
+        locallyControlledParameters.insert(parameter)
+        acceptedCommandValues.removeValue(forKey: parameter)
         lastError = nil
         log("Local \(parameter.commandKey) -> \(clampedValue)")
         scheduleSyncIfNeeded()
@@ -75,6 +70,8 @@ final class StrokeEngineControlViewModel: ObservableObject {
 
     func apply(_ state: OSSMPlayData) {
         desiredState = state
+        locallyControlledParameters = Set(StrokeEngineParameter.allCases)
+        acceptedCommandValues.removeAll()
         lastError = nil
         log("Applying desired state \(state)")
         scheduleSyncIfNeeded()
@@ -87,6 +84,10 @@ final class StrokeEngineControlViewModel: ObservableObject {
         var mergedState = desiredState
 
         for parameter in StrokeEngineParameter.allCases {
+            if locallyControlledParameters.contains(parameter) {
+                continue
+            }
+
             let desiredValue = desiredState.value(for: parameter)
             let previousObservedValue = previousObservedState.value(for: parameter)
             let incomingValue = incomingState.value(for: parameter)
@@ -101,8 +102,7 @@ final class StrokeEngineControlViewModel: ObservableObject {
     }
 
     private func effectiveObservedValue(for parameter: StrokeEngineParameter) -> Int {
-        pruneExpiredPendingConfirmations()
-        return pendingConfirmations[parameter]?.value ?? observedState.value(for: parameter)
+        acceptedCommandValues[parameter] ?? observedState.value(for: parameter)
     }
 
     private func nextParameterToSync() -> (parameter: StrokeEngineParameter, value: Int)? {
@@ -118,7 +118,6 @@ final class StrokeEngineControlViewModel: ObservableObject {
     }
 
     private func scheduleSyncIfNeeded() {
-        pruneExpiredPendingConfirmations()
         guard syncTask == nil else { return }
         guard nextParameterToSync() != nil else { return }
 
@@ -145,38 +144,13 @@ final class StrokeEngineControlViewModel: ObservableObject {
                     value: nextUpdate.value
                 )
 
-                pendingConfirmations[nextUpdate.parameter] = PendingConfirmation(
-                    value: nextUpdate.value,
-                    sentAt: Date()
-                )
+                acceptedCommandValues[nextUpdate.parameter] = nextUpdate.value
                 log("Synced \(nextUpdate.parameter.commandKey) -> \(nextUpdate.value)")
             } catch {
-                pendingConfirmations.removeValue(forKey: nextUpdate.parameter)
+                acceptedCommandValues.removeValue(forKey: nextUpdate.parameter)
                 lastError = error.localizedDescription
                 log("Sync failed for \(nextUpdate.parameter.commandKey): \(error.localizedDescription)")
                 return
-            }
-        }
-    }
-
-    private func clearConfirmedPendingConfirmations(using incomingState: OSSMPlayData) {
-        for parameter in StrokeEngineParameter.allCases {
-            guard let pending = pendingConfirmations[parameter] else { continue }
-            if pending.value == incomingState.value(for: parameter) {
-                pendingConfirmations.removeValue(forKey: parameter)
-            }
-        }
-    }
-
-    private func pruneExpiredPendingConfirmations() {
-        let now = Date()
-        let expiredParameters = pendingConfirmations.compactMap { parameter, pending in
-            now.timeIntervalSince(pending.sentAt) > confirmationTimeout ? parameter : nil
-        }
-
-        for parameter in expiredParameters {
-            if let pending = pendingConfirmations.removeValue(forKey: parameter) {
-                log("Timed out waiting for \(parameter.commandKey)=\(pending.value) confirmation")
             }
         }
     }

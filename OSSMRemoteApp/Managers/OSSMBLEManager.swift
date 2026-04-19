@@ -561,7 +561,7 @@ class OSSMBLEManager: NSObject, ObservableObject {
         activeCommandTimeoutTask?.cancel()
         activeCommandTimeoutTask = nil
 
-        let outcome = parseCommandResponseOutcome(response)
+        let outcome = parseCommandResponseOutcome(response, for: activeCommand.command)
         recordCommandResponse(eventID: activeCommand.eventID, response: response, outcome: outcome)
         switch outcome {
         case .succeeded:
@@ -699,11 +699,12 @@ class OSSMBLEManager: NSObject, ObservableObject {
         pendingReadCompletion = nil
     }
 
-    private func parseCommandResponseOutcome(_ response: String) -> CommandOutcome {
-        if response.hasPrefix("ok:") || response == "ok" {
+    private func parseCommandResponseOutcome(_ response: String, for command: String) -> CommandOutcome {
+        let normalizedResponse = response.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalizedResponse.hasPrefix("ok:") || normalizedResponse == "ok" || normalizedResponse == command {
             return .succeeded
         }
-        if response.hasPrefix("fail:") {
+        if normalizedResponse.hasPrefix("fail:") {
             return .firmwareFailed
         }
         return .malformedResponse

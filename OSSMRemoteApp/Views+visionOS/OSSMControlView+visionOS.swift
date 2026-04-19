@@ -19,6 +19,19 @@ extension OSSMControlView {
         .padding(12)
         .glassBackgroundEffect()
     }
+
+    var visionOSStrokeEngineStatusMenu: some View {
+        HStack(spacing: 12) {
+            statusMenu
+            Button("Stroke Engine Settings", systemImage: "slider.horizontal.3") {
+                showStrokeEngineSettings = true
+            }
+            .labelStyle(.iconOnly)
+        }
+        .padding(12)
+        .glassBackgroundEffect()
+    }
+
     var visionBody: some View {
         NavigationStack (path: $path){
             Group {
@@ -52,9 +65,9 @@ extension OSSMControlView {
                             statusMenu
                     }
                 case .strokeEngine:
-                    StrokeEngineView()
+                    StrokeEngineView(showSettings: $showStrokeEngineSettings)
                         .ornament(attachmentAnchor: .scene(.topTrailing)) {
-                            statusMenu
+                            visionOSStrokeEngineStatusMenu
                         }
                 case .streaming:
                     StreamingView()
@@ -74,6 +87,9 @@ extension OSSMControlView {
         }
         .onChange(of: path, { _, newPath in
             let target = newPath.last ?? .menu
+            if target != .strokeEngine {
+                showStrokeEngineSettings = false
+            }
             Task {
                 try? await bleManager.navigateTo(target)
             }

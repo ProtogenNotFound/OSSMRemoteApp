@@ -75,6 +75,7 @@ extension HomingSheetView {
         .animation(.easeInOut, value: homingString)
         .font(.largeTitle.bold())
         .fontDesign(.rounded)
+        .padding()
         .onAppear { onAppear() }
         .onDisappear { onDisappear() }
     }

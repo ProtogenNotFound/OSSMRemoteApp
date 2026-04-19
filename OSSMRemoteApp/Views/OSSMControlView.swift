@@ -19,6 +19,7 @@ struct OSSMControlView: PlatformSplitView {
     @EnvironmentObject var bleManager: OSSMBLEManager
     @State var path: [OSSMPage] = []
     @State var showSettings: Bool = false
+    @State var showStrokeEngineSettings: Bool = false
     @State var showError: Bool = false
     @State var errorMessage: String = ""
 
@@ -238,6 +239,13 @@ struct OSSMControlView: PlatformSplitView {
                 }
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("close", systemImage: "xmark") {
+                        showSettings.toggle()
+                    }
+                }
+            }
         }
     }
 
