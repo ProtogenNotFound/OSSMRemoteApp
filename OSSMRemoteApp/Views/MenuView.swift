@@ -5,6 +5,8 @@
 
 import SwiftUI
 import SwiftData
+import RealityKit
+import AppIntents
 
 struct MenuView: PlatformSplitView {
     @EnvironmentObject var bleManager: OSSMBLEManager
@@ -29,36 +31,93 @@ struct MenuView: PlatformSplitView {
     }
 
     #if !os(visionOS)
-    var iosBody: some View {
-        ossmPreviewImageView()
-            .padding(40)
-            .toolbar{
-            ToolbarItemGroup(placement: .bottomBar) {
-                NavigationLink(value: OSSMPage.strokeEngine){
-                    VStack {
-                        Text("Stroke Engine")
-                            .padding(12)
-                    }
-                        .frame(maxWidth: .infinity)
 
-                }
-                .font(.title2.bold())
-                .buttonStyle(.borderedProminent)
-                .matchedTransitionSource(id: "strokeEngineTitleZoom", in: heroTransitionNamespace)
-                NavigationLink(value: OSSMPage.streaming){
-                    VStack {
-                        Text("Streaming")
-                            .padding(12)
-                    }
-                        .frame(maxWidth: .infinity)
-
-                }
-                .font(.title2.bold())
-                .buttonStyle(.borderedProminent)
-                .matchedTransitionSource(id: "streamingTitleZoom", in: heroTransitionNamespace)
-
+    func menuViewCard(symbol: String, value: String, descriptor: String) -> some View {
+        HStack{
+            Image(systemName: symbol)
+                .font(.title)
+            VStack(alignment: .leading) {
+                Text(value)
+                Text(descriptor)
+                    .font(.caption2)
             }
         }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassEffect()
+        .padding(4)
+    }
+
+
+    var iosBody: some View {
+        VStack {
+            OSSMPreviewRealityView()
+            if !sessionHistory.isEmpty {
+                let totalSessions = sessionHistory.count
+                let totalTimeMs = sessionHistory.map(\.elapsedMs).reduce(0, +)
+                let totalStrokes = sessionHistory.map(\.strokes).reduce(0, +)
+                let totalDistanceM = sessionHistory.map(\.distanceM).reduce(0, +)
+                LazyVGrid(columns: [GridItem(.flexible(minimum: 100, maximum: 400)), GridItem(.flexible(minimum: 100, maximum: 400))]) {
+                    menuViewCard(symbol: "figure.pilates.circle", value: totalSessions.description, descriptor: "Sessions")
+                    menuViewCard(symbol: "clock", value: Self.formattedDuration(fromMilliseconds: totalTimeMs), descriptor: "Recorded time")
+                    menuViewCard(symbol: "arrow.left.arrow.right", value: totalStrokes.description, descriptor: "Strokes")
+                    menuViewCard(symbol: "ruler", value: totalDistanceM.formatted(.number.precision(.fractionLength(1)))+"m", descriptor: "Distance travelled")
+                }.padding(40)
+            }
+        }
+        .toolbar{
+        ToolbarItemGroup(placement: .bottomBar) {
+            NavigationLink(value: OSSMPage.strokeEngine){
+                VStack {
+                    Text("Stroke Engine")
+                        .padding(12)
+                }
+                    .frame(maxWidth: .infinity)
+
+            }
+            .font(.title2.bold())
+            .buttonStyle(.borderedProminent)
+            .matchedTransitionSource(id: "strokeEngineTitleZoom", in: heroTransitionNamespace)
+            NavigationLink(value: OSSMPage.streaming){
+                VStack {
+                    Text("Streaming")
+                        .padding(12)
+                }
+                    .frame(maxWidth: .infinity)
+
+            }
+            .font(.title2.bold())
+            .buttonStyle(.borderedProminent)
+            .matchedTransitionSource(id: "streamingTitleZoom", in: heroTransitionNamespace)
+
+        }
+    }
+    }
+
+    static func formattedDuration(fromMilliseconds milliseconds: Int) -> String {
+        let totalSeconds = Int((Double(milliseconds) / 1000.0).rounded())
+
+        guard totalSeconds > 0 else { return "0s" }
+
+        let units: [(suffix: String, seconds: Int)] = [
+            ("y", 365 * 24 * 60 * 60),
+            ("d", 24 * 60 * 60),
+            ("h", 60 * 60),
+            ("m", 60),
+            ("s", 1)
+        ]
+
+        var remainingSeconds = totalSeconds
+        var components: [String] = []
+
+        for unit in units {
+            let value = remainingSeconds / unit.seconds
+            guard value > 0 else { continue }
+            components.append("\(value)\(unit.suffix)")
+            remainingSeconds %= unit.seconds
+        }
+
+        return components.joined()
     }
 
     func ossmPreviewImageView() -> some View {
@@ -133,6 +192,17 @@ struct MenuView: PlatformSplitView {
     }
 
     #endif
+}
+
+struct OSSMPreviewRealityView: View {
+    var body: some View {
+        RealityView{context in
+            guard let ossm = try? await Entity(named: "ossm_model") else {print("no ossm");return}
+            ossm.transform.rotation = Transform(pitch: -.pi / 2, yaw: .pi, roll: 0).rotation
+            ossm.transform.scale = .init(repeating: 4)
+            context.add(ossm)
+        }
+    }
 }
 
 #if os(visionOS)

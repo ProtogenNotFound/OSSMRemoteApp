@@ -33,7 +33,7 @@ extension OSSMControlView {
     }
 
     var visionBody: some View {
-        NavigationStack (path: $path){
+        NavigationStack (path: $navigationPath.path){
             Group {
                 if bleManager.connectionStatus == .ready {
                     MenuView()
@@ -85,7 +85,8 @@ extension OSSMControlView {
         .sheet(isPresented: $showSettings) {
             settingsSheet
         }
-        .onChange(of: path, { _, newPath in
+        .onAppear(perform: registerNavigationDependency)
+        .onChange(of: navigationPath.path, { _, newPath in
             let target = newPath.last ?? .menu
             if target != .strokeEngine {
                 showStrokeEngineSettings = false
@@ -110,7 +111,7 @@ extension OSSMControlView {
         }
         .onChange(of: bleManager.connectionStatus) { _, status in
             if status == .ready {
-                path = []
+                navigationPath.path = []
                 Task {
                     try? await bleManager.navigateTo(.menu)
                 }

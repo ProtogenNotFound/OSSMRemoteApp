@@ -5,6 +5,7 @@
 
 import SwiftUI
 import SwiftData
+import AppIntents
 
 struct StrokeEngineView: PlatformSplitView {
     @Environment(\.modelContext) var modelContext
@@ -49,7 +50,7 @@ struct StrokeEngineView: PlatformSplitView {
     }
     #endif
 
-    @StateObject var controls = StrokeEngineControlViewModel()
+    @StateObject var controls = AppIntentShared.strokeEngineViewModel
     @State var showSensationInfo: Bool = false
 
     let sliderRange: ClosedRange<Int> = 0...100
@@ -584,6 +585,135 @@ struct StrokeEngineView: PlatformSplitView {
         depthStepAmountSetting = clampSettingsValue(depthStepAmountSetting)
         sensationStepAmountSetting = clampSettingsValue(sensationStepAmountSetting)
     }
+
+    @available(iOS 27.3, visionOS 27.3, *)
+    @AppIntent(.tool)
+    struct SetParameter: AppIntent {
+        static let title: LocalizedStringResource = "Change Stroke Engine Settings"
+        static let description: IntentDescription =
+            """
+            Set or adjust OSSM movement settings. Omitted settings remain unchanged.
+            Movement is measured in percentages of full travel and spans max(0,depth-stroke) to depth.
+            """
+
+        @Parameter(
+            title: "Speed",
+            description: "Speed from 0% (stopped) to 100% (maximum). Adjust in percentage points."
+        )
+        var speed: StrokeEngineParameterChange?
+
+        @Parameter(
+            title: "Stroke",
+            description: "Stroke length from 0% to 100% of full travel, extending outward from depth. Adjust in percentage points."
+        )
+        var stroke: StrokeEngineParameterChange?
+
+        @Parameter(
+            title: "Depth",
+            description: "Inner endpoint from 0% (fully out) to 100% (fully in). Adjust in percentage points."
+        )
+        var depth: StrokeEngineParameterChange?
+
+        @Parameter(
+            title: "Sensation",
+            description: "Pattern modifier from −100 to 100, with 0 neutral. Adjust in points. Has no effect in Simple Stroke."
+        )
+        var sensation: StrokeEngineParameterChange?
+
+        @Parameter(
+            title: "Pattern",
+            description: "Movement pattern to select."
+        )
+        var pattern: KnownPattern?
+
+        @Dependency
+        private var strokeEngineModel: StrokeEngineControlViewModel
+
+        @Dependency
+        private var navigationPath: OSSMNavigationPath
+
+        @Dependency
+        private var ossmBLEManager: OSSMBLEManager
+
+        @MainActor
+        func perform() async throws -> some IntentResult {
+            guard navigationPath.path.last == .strokeEngine else {
+                throw AppIntentError(description: "Open Stroke Engine to change its settings.")
+            }
+            var patternIndex: Int?
+            if let pattern {
+                guard let mappedPattern = ossmBLEManager.patterns.first(where: { $0.name == pattern.name }) else {
+                    throw AppIntentError(description: "The connected device does not offer \(pattern.name).")
+                }
+                patternIndex = mappedPattern.idx
+            }
+
+            let changes: [(StrokeEngineParameter, StrokeEngineParameterChange?)] = [
+                (.speed, speed),
+                (.stroke, stroke),
+                (.depth, depth),
+                (.sensation, sensation)
+            ]
+            for (parameter, change) in changes {
+                guard let change else { continue }
+                switch change.operation {
+                case .set:
+                    var target = change.amount
+                    if parameter == .sensation {
+                        // The BLE setting encodes neutral (0 onscreen) as 50.
+                        let signedValue = min(100, max(-100, target))
+                        target = Int((Double(signedValue + 100) / 2).rounded())
+                    }
+                    strokeEngineModel.setValue(target, for: parameter)
+                case .adjust:
+                    let limit = parameter == .sensation ? 200 : 100
+                    var delta = min(limit, max(-limit, change.amount))
+                    if parameter == .sensation {
+                        delta = Int((Double(delta) / 2).rounded())
+                    }
+                    strokeEngineModel.adjustValue(for: parameter, by: delta)
+                }
+            }
+            if let patternIndex {
+                strokeEngineModel.setValue(patternIndex, for: .pattern)
+            }
+
+            return .result()
+        }
+    }
+}
+
+@available(iOS 27.3, visionOS 27.3, *)
+enum StrokeEngineChangeOperation: String, AppEnum {
+    case set
+    case adjust
+
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Operation"
+    static let caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .set: "Set",
+        .adjust: "Adjust"
+    ]
+}
+
+@available(iOS 27.3, visionOS 27.3, *)
+@AppEntity(.generable)
+struct StrokeEngineParameterChange: TransientAppEntity {
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Setting Change"
+
+    @Property(title: "Operation", description: "Set an absolute target or adjust the current setting.")
+    var operation: StrokeEngineChangeOperation
+
+    @Property(title: "Amount", description: "Target for Set. For Adjust, positive increases and negative decreases.")
+    var amount: Int
+
+    var displayRepresentation: DisplayRepresentation {
+        switch operation {
+        case .set: DisplayRepresentation(title: "Set to \(amount)")
+        case .adjust: DisplayRepresentation(title: "Adjust by \(amount)")
+        }
+    }
+
+    init() {}
 }
 
 #if !os(visionOS)

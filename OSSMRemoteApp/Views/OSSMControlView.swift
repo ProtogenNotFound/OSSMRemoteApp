@@ -8,6 +8,7 @@
 import SwiftUI
 import CoreBluetooth
 import SwiftData
+import AppIntents
 
 struct OSSMControlView: PlatformSplitView {
     @AppStorage("homingForwardTime") var homingForwardTime: Double?
@@ -15,9 +16,12 @@ struct OSSMControlView: PlatformSplitView {
     @AppStorage("savedUUID") var savedUUID: String?
     @AppStorage("debug.sessionData.persist") var persistDebugSessionData = false
     @AppStorage("strokeEngine.settings.saveLiveSessionData") var saveLiveSessionData = true
+    #if DEBUG
+    @AppStorage(DebugSessionHistoryModelContainer.useDemoDatabaseKey) var useDemoSessionHistoryDatabase = false
+    #endif
     @Environment(\.modelContext) private var modelContext
     @EnvironmentObject var bleManager: OSSMBLEManager
-    @State var path: [OSSMPage] = []
+    @StateObject var navigationPath: OSSMNavigationPath
     @State var showSettings: Bool = false
     @State var showStrokeEngineSettings: Bool = false
     @State var showError: Bool = false
@@ -95,7 +99,7 @@ struct OSSMControlView: PlatformSplitView {
 
     #if !os(visionOS)
     var iosBody: some View {
-        NavigationStack (path: $path){
+        NavigationStack (path: $navigationPath.path){
             Group {
                 if bleManager.connectionStatus == .ready {
                     MenuView(heroTransitionNamespace: strokeEngineTransition)
@@ -150,13 +154,19 @@ struct OSSMControlView: PlatformSplitView {
                     .labelStyle(.iconOnly)
                 }
             }
-            .navigationTitle("OSSM Control")
+            .navigationTitle("SMMR")
         }
+
         .sheet(isPresented: $showSettings) {
             settingsSheet
                 .presentationDetents([.large])
         }
-        .onChange(of: path, { _, newPath in
+        .alert("Error", isPresented: $showError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(errorMessage)
+        }
+        .onChange(of: navigationPath.path, { _, newPath in
             let target = newPath.last ?? .menu
             Task {
                 try? await bleManager.navigateTo(target)
@@ -165,26 +175,21 @@ struct OSSMControlView: PlatformSplitView {
         .onChange(of: bleManager.discoveredPeripherals) { _, _ in
             tryConnectIfSaved()
         }
-        .alert("Error", isPresented: $showError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(errorMessage)
-        }
         .onChange(of: bleManager.lastError) { _, newValue in
             if let error = newValue {
                 errorMessage = error
                 showError = true
             }
         }
-        // Removed redundant .onChange(of: bleManager.currentState) to prevent main view refreshes
         .onChange(of: bleManager.connectionStatus) { _, status in
             if status == .ready {
-                path = []
+                navigationPath.path = []
                 Task {
                     try? await bleManager.navigateTo(.menu)
                 }
             }
         }
+
         .onReceive(bleManager.runtimeData.$currentSessionStats) { sessionStats in
             guard let sessionStats else { return }
             persistSessionStats(sessionStats)
@@ -224,6 +229,12 @@ struct OSSMControlView: PlatformSplitView {
                     }
                     Toggle("Simulate live session data", isOn: liveDataBinding)
                     Toggle("Persist simulated session data", isOn: $persistDebugSessionData)
+                    #if DEBUG
+                    Toggle("Use demo session history database", isOn: $useDemoSessionHistoryDatabase)
+                    Text("Uses a generated in-memory history from the last 30 days.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                    #endif
                     let spsBinding = Binding<Double> {
                         bleManager.debugSessionSimulator.strokesPerSecond
                     } set: {
@@ -403,5 +414,10 @@ struct OSSMControlView: PlatformSplitView {
         if let match = bleManager.discoveredPeripherals.first(where: { $0.identifier.uuidString == saved }) {
             bleManager.connect(to: match)
         }
+    }
+
+    init() {
+        let path = AppIntentShared.navigationPath
+        self._navigationPath = StateObject(wrappedValue: path)
     }
 }

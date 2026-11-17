@@ -10,6 +10,8 @@ import CoreBluetooth
 import SwiftUI
 import Combine
 import SwiftData
+import AppIntents
+
 
 // MARK: - OSSM Data Types
 
@@ -73,7 +75,48 @@ enum OSSMPage: String, CaseIterable, Hashable {
 }
 
 /// Known stroke patterns (from firmware - 7 patterns, 0-6)
-enum KnownPattern: Int, CaseIterable, Identifiable {
+enum KnownPattern: Int, CaseIterable, Identifiable, AppEnum {
+    static var typeDisplayRepresentation: TypeDisplayRepresentation {
+        TypeDisplayRepresentation(name: "Pattern")
+    }
+    static var caseDisplayRepresentations: [Self: DisplayRepresentation] = [
+        .simpleStroke: DisplayRepresentation(
+            title: "Simple Stroke",
+            subtitle: "Speeds up, coasts, and slows down on each stroke. Sensation has no effect.",
+            synonyms: ["Basic Stroke"]
+        ),
+        .teasingPounding: DisplayRepresentation(
+            title: "Teasing/Pounding",
+            subtitle: "Varies inward and outward speeds. Positive Sensation speeds up inward motion. Negative speeds up outward motion.",
+            synonyms: ["Teasing and Pounding", "Uneven In and Out Speed"]
+        ),
+        .roboStroke: DisplayRepresentation(
+            title: "Robo Stroke",
+            subtitle: "Positive Sensation makes strokes reach steady speed sooner. Negative makes acceleration more gradual. Zero matches Simple Stroke.",
+            synonyms: ["Robotic Stroke", "Variable Acceleration"]
+        ),
+        .halfNHalf: DisplayRepresentation(
+            title: "Half N Half",
+            subtitle: "Alternates full-depth and half-depth strokes. Positive Sensation speeds up inward motion. Negative speeds up outward motion.",
+            synonyms: ["Half and Half", "Alternating Full and Half Depth"]
+        ),
+        .deeper: DisplayRepresentation(
+            title: "Deeper",
+            subtitle: "Repeats a series of strokes that get progressively deeper. Sensation sets the number of strokes in each series.",
+            synonyms: ["Progressively Deeper", "Increasing Depth"]
+        ),
+        .stopNGo: DisplayRepresentation(
+            title: "Stop N Go",
+            subtitle: "Pauses between groups of strokes. Sensation controls how long each pause lasts.",
+            synonyms: ["Stop and Go", "Strokes with Pauses"]
+        ),
+        .insist: DisplayRepresentation(
+            title: "Insist",
+            subtitle: "Varies stroke length at the same speed. Positive Sensation shifts strokes toward the front. Negative shifts them toward the back.",
+            synonyms: ["Variable Stroke Length"]
+        )
+    ]
+
     case simpleStroke = 0
     case teasingPounding = 1
     case roboStroke = 2
