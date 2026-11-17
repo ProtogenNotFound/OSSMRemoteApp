@@ -589,6 +589,8 @@ struct StrokeEngineView: PlatformSplitView {
     @available(iOS 27.3, visionOS 27.3, *)
     @AppIntent(.tool)
     struct SetParameter: AppIntent {
+        static let isAssistantOnly: Bool = true
+
         static let title: LocalizedStringResource = "Change Stroke Engine Settings"
         static let description: IntentDescription =
             """

@@ -79,6 +79,8 @@ enum OSSMPageIntentWrapper: String, CaseIterable, Hashable, AppEnum {
 @available(iOS 27.3 , *)
 @AppIntent(.tool)
 struct NavigateTo: AppIntent {
+    static let isAssistantOnly: Bool = true
+
     static let title: LocalizedStringResource = "Navigate to a page"
     static let description: IntentDescription = "Navigates to or opens a page"
 
